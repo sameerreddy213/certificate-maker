@@ -1,8 +1,8 @@
 // server/src/controllers/templateController.ts
-import { Response } from 'express'; // Only need Response directly now
+import { Response } from 'express';
 import CertificateTemplate from '../models/CertificateTemplate';
-import { AuthenticatedRequest } from '../middleware/authMiddleware'; // Correctly import AuthenticatedRequest
-import fs from 'fs'; // Node.js file system module
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
+import fs from 'fs/promises'; // Changed to fs/promises for async file operations
 import path from 'path';
 
 // Define a custom Request type to include `file` from multer,
@@ -15,20 +15,24 @@ interface TemplateRequest extends AuthenticatedRequest {
 // @route   POST /api/templates
 // @access  Private
 export const createTemplate = async (req: TemplateRequest, res: Response) => {
+  const templateFile = req.file;
+
   try {
-    // req.body, req.file, req.user are now correctly typed due to interface extension
     const { name, description, template_type, placeholders: placeholdersJson } = req.body;
-    const templateFile = req.file;
 
     if (!templateFile) {
       return res.status(400).json({ message: 'Template file is required.' });
     }
     if (!name || !template_type || !placeholdersJson) {
-        // If template_file was uploaded but other required fields are missing, delete the file
-        if (templateFile && fs.existsSync(templateFile.path)) {
-            fs.unlinkSync(templateFile.path);
+      // If template_file was uploaded but other required fields are missing, delete the file
+      if (templateFile) {
+        try {
+          await fs.unlink(templateFile.path);
+        } catch (unlinkError: any) {
+          console.error(`Failed to clean up uploaded file: ${templateFile.path}`, unlinkError.message);
         }
-        return res.status(400).json({ message: 'Please provide template name, type, and placeholders.' });
+      }
+      return res.status(400).json({ message: 'Please provide template name, type, and placeholders.' });
     }
 
     // Parse placeholders from JSON string (sent as JSON.stringify from frontend)
@@ -39,10 +43,14 @@ export const createTemplate = async (req: TemplateRequest, res: Response) => {
         throw new Error('Placeholders must be an array.');
       }
     } catch (parseError) {
-        if (templateFile && fs.existsSync(templateFile.path)) {
-            fs.unlinkSync(templateFile.path);
+      if (templateFile) {
+        try {
+          await fs.unlink(templateFile.path); // Clean up if parse error
+        } catch (unlinkError: any) {
+          console.error(`Failed to clean up uploaded file after parse error: ${templateFile.path}`, unlinkError.message);
         }
-        return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
+      }
+      return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
     }
 
     const newTemplate = new CertificateTemplate({
@@ -59,8 +67,12 @@ export const createTemplate = async (req: TemplateRequest, res: Response) => {
   } catch (error: any) {
     console.error('Error creating template:', error);
     // If an error occurs during saving, clean up the uploaded file if it exists
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+    if (templateFile) {
+      try {
+        await fs.unlink(templateFile.path);
+      } catch (unlinkError: any) {
+        console.error(`Failed to clean up uploaded file after server error: ${templateFile.path}`, unlinkError.message);
+      }
     }
     res.status(500).json({ message: error.message || 'Server error' });
   }
@@ -97,13 +109,20 @@ export const getTemplateById = async (req: AuthenticatedRequest, res: Response) 
 // @route   PUT /api/templates/:id
 // @access  Private
 export const updateTemplate = async (req: TemplateRequest, res: Response) => {
+  const templateFile = req.file;
+
   try {
     const { name, description, template_type, placeholders: placeholdersJson } = req.body;
-    const templateFile = req.file;
 
     const existingTemplate = await CertificateTemplate.findById(req.params.id);
     if (!existingTemplate || String(existingTemplate.owner) !== String(req.user?.id)) {
-      if (templateFile) fs.unlinkSync(templateFile.path); // Clean up if not authorized
+      if (templateFile) {
+        try {
+          await fs.unlink(templateFile.path); // Clean up if not authorized
+        } catch (unlinkError: any) {
+          console.error(`Failed to clean up uploaded file for unauthorized update: ${templateFile.path}`, unlinkError.message);
+        }
+      }
       return res.status(404).json({ message: 'Template not found or you do not have access.' });
     }
 
@@ -113,18 +132,28 @@ export const updateTemplate = async (req: TemplateRequest, res: Response) => {
       try {
         updateFields.placeholders = JSON.parse(placeholdersJson);
         if (!Array.isArray(updateFields.placeholders)) {
-            throw new Error('Placeholders must be an array.');
+          throw new Error('Placeholders must be an array.');
         }
       } catch (parseError) {
-          if (templateFile) fs.unlinkSync(templateFile.path);
-          return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
+        if (templateFile) {
+          try {
+            await fs.unlink(templateFile.path); // Clean up if parse error
+          } catch (unlinkError: any) {
+            console.error(`Failed to clean up uploaded file after parse error during update: ${templateFile.path}`, unlinkError.message);
+          }
+        }
+        return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
       }
     }
 
     if (templateFile) {
       // Delete old file if a new one is uploaded
-      if (existingTemplate.templateFilePath && fs.existsSync(existingTemplate.templateFilePath)) {
-        fs.unlinkSync(existingTemplate.templateFilePath);
+      if (existingTemplate.templateFilePath) {
+        try {
+          await fs.unlink(existingTemplate.templateFilePath);
+        } catch (fileError: any) {
+          console.warn(`Could not delete old template file during update, it may already be removed or path is invalid: ${existingTemplate.templateFilePath}`, fileError.message);
+        }
       }
       updateFields.templateFilePath = templateFile.path;
     }
@@ -138,32 +167,73 @@ export const updateTemplate = async (req: TemplateRequest, res: Response) => {
     res.status(200).json(updatedTemplate);
   } catch (error: any) {
     console.error('Error updating template:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
+    if (templateFile) {
+      try {
+        await fs.unlink(templateFile.path); // Clean up new uploaded file on error
+      } catch (unlinkError: any) {
+        console.error(`Failed to clean up new uploaded file after update error: ${templateFile.path}`, unlinkError.message);
+      }
     }
     res.status(500).json({ message: error.message || 'Server error' });
   }
 };
 
-// @desc    Delete a template
-// @route   DELETE /api/templates/:id
-// @access  Private
+/**
+ * @desc    Delete a certificate template
+ * @route   DELETE /api/templates/:id
+ * @access  Private
+ */
 export const deleteTemplate = async (req: AuthenticatedRequest, res: Response) => {
+  console.log(`[DELETE] Received request to delete template ID: ${req.params.id}`);
+
+  if (!req.user) {
+    console.log('[DELETE] FAILED: User not authenticated.');
+    return res.status(401).json({ message: 'User not authenticated' });
+  }
+
   try {
-    const template = await CertificateTemplate.findOne({ _id: req.params.id, owner: req.user?.id });
+    const template = await CertificateTemplate.findById(req.params.id);
+
     if (!template) {
-      return res.status(404).json({ message: 'Template not found or you do not have access.' });
+      console.log(`[DELETE] FAILED: Template with ID ${req.params.id} not found.`);
+      return res.status(404).json({ message: 'Template not found' });
     }
+    console.log(`[DELETE] Found template: ${template.name}, owned by: ${template.owner}`);
+
+    // Ensure the user owns the template before deleting
+    // Use .toString() for comparison with req.user.id which is a string
+    if (template.owner.toString() !== req.user.id) {
+      console.log(`[DELETE] FAILED: User ${req.user.id} does not own template (owner is ${template.owner}).`);
+      return res.status(401).json({ message: 'User not authorized' });
+    }
+    console.log('[DELETE] User ownership confirmed.');
 
     // Delete the physical file from the server
-    if (template.templateFilePath && fs.existsSync(template.templateFilePath)) {
-      fs.unlinkSync(template.templateFilePath);
+    // Construct the file path using path.join for cross-platform compatibility
+    // Assuming `template.templateFilePath` is relative to the project root or a known base directory
+    // If it's already an absolute path, path.join will handle it correctly (the absolute part will dominate)
+    const filePath = path.join(__dirname, '../../', template.templateFilePath);
+    console.log(`[DELETE] Attempting to delete file at: ${filePath}`);
+    try {
+      await fs.unlink(filePath);
+      console.log('[DELETE] Successfully deleted physical file.');
+    } catch (fileError: any) {
+      if (fileError.code === 'ENOENT') {
+        console.warn(`[DELETE] Template file not found at ${filePath}, it may have been already deleted. Continuing...`);
+      } else {
+        console.error(`[DELETE] Error deleting physical file at ${filePath}:`, fileError);
+        throw fileError; // Re-throw other file errors
+      }
     }
 
-    await template.deleteOne(); // Use deleteOne() for Mongoose 5.x+
+    // Remove the template from the database
+    console.log('[DELETE] Attempting to delete template from database.');
+    await template.deleteOne();
+    console.log('[DELETE] Successfully deleted template from database.');
+
     res.status(200).json({ message: 'Template deleted successfully' });
   } catch (error: any) {
-    console.error('Error deleting template:', error);
-    res.status(500).json({ message: error.message || 'Server error' });
+    console.error('[DELETE] CRITICAL ERROR during template deletion:', error);
+    res.status(500).json({ message: 'Server error while deleting template' });
   }
 };

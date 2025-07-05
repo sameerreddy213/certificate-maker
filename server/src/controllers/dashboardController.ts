@@ -1,56 +1,57 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { AuthenticatedRequest } from '../middleware/authMiddleware';
 import CertificateTemplate from '../models/CertificateTemplate';
 import CertificateBatch from '../models/CertificateBatch';
-import User from '../models/User'; // Assuming you might want user-specific stats later
+import Certificate from '../models/Certificate';
+import mongoose from 'mongoose'; // THE FIX IS HERE
 
-export const getDashboardStats = async (req: Request, res: Response) => {
+/**
+ * @desc    Get dashboard statistics
+ * @route   GET /api/dashboard/stats
+ * @access  Private
+ */
+export const getDashboardStats = async (req: AuthenticatedRequest, res: Response) => {
+  // The 'protect' middleware guarantees that req.user is not null
+  const userId = req.user!.id;
+
   try {
-    // Aggregation queries
-    const totalTemplates = await CertificateTemplate.countDocuments();
-    const totalBatches = await CertificateBatch.countDocuments();
+    // Get total counts
+    const totalTemplates = await CertificateTemplate.countDocuments({ user_id: userId });
+    const totalBatches = await CertificateBatch.countDocuments({ user_id: userId });
+    const totalCertificates = await Certificate.countDocuments({ userId: userId });
 
-    const totalCertificatesResult = await CertificateBatch.aggregate([
-      { $group: { _id: null, total: { $sum: "$total_certificates" } } }
-    ]);
-    const totalCertificates = totalCertificatesResult.length > 0 ? totalCertificatesResult[0].total : 0;
-
-    // Data for the chart (last 7 days)
+    // Get data for the last 7 days for the chart
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const dailyGenerations = await CertificateBatch.aggregate([
-        { $match: { createdAt: { $gte: sevenDaysAgo } } },
-        {
-            $group: {
-                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                count: { $sum: "$total_certificates" }
-            }
+    const certificateCounts = await Certificate.aggregate([
+      // Match documents for the specific user created in the last 7 days
+      { $match: { userId: new mongoose.Types.ObjectId(userId), createdAt: { $gte: sevenDaysAgo } } },
+      {
+        // Group by the creation date
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 },
         },
-        { $sort: { _id: 1 } }
+      },
+      // Sort by date in ascending order
+      { $sort: { _id: 1 } },
     ]);
-    
-    // Format chart data
-    const chartData = [];
-    for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(date.getDate() - i);
-        const dateString = date.toISOString().split('T')[0];
-        const dayData = dailyGenerations.find(d => d._id === dateString);
-        chartData.push({
-            date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            count: dayData ? dayData.count : 0,
-        });
-    }
 
-    res.json({
+    // Format data for the client-side chart
+    const chartData = certificateCounts.map(item => ({
+      date: item._id,
+      count: item.count,
+    }));
+
+    res.status(200).json({
       totalTemplates,
       totalBatches,
       totalCertificates,
       chartData,
     });
-
   } catch (error: any) {
-    console.error(error.message);
-    res.status(500).send('Server Error');
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ message: 'Server error while fetching dashboard stats' });
   }
 };
