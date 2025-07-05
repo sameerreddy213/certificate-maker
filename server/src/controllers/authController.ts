@@ -4,7 +4,10 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User';
-import { jwtConfig } from '../config/jwt'; // This import now carries the correct types
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 // The 'register' function
 export const register = async (req: Request, res: Response) => {
@@ -35,11 +38,15 @@ export const register = async (req: Request, res: Response) => {
       },
     };
 
-    // This will now compile correctly
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET is not defined in the environment variables.');
+    }
+
     jwt.sign(
       payload,
-      jwtConfig.secret,
-      { expiresIn: jwtConfig.expiresIn },
+      secret,
+      { expiresIn: '1h' },
       (err, token) => {
         if (err) throw err;
         res.status(201).json({ token });
@@ -74,11 +81,15 @@ export const login = async (req: Request, res: Response) => {
       },
     };
 
-    // This will now compile correctly
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET is not defined in the environment variables.');
+    }
+
     jwt.sign(
       payload,
-      jwtConfig.secret,
-      { expiresIn: jwtConfig.expiresIn },
+      secret,
+      { expiresIn: '1h' },
       (err, token) => {
         if (err) throw err;
         res.json({ token });
