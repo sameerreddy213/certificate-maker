@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 
+// Ensure the file exists at the specified path or update the path if necessary
 import authRoutes from './routes/authRoutes';
 import templateRoutes from './routes/templateRoutes';
 import batchRoutes from './routes/batchRoutes';

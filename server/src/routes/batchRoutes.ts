@@ -1,6 +1,9 @@
 import express from 'express';
 import { protect } from '../middleware/authMiddleware';
-import { upload } from '../middleware/uploadMiddleware';
+import multer from 'multer';
+
+const storage = multer.memoryStorage();
+export const upload = multer({ storage });
 import {
   getBatches,
   startBatchGeneration,

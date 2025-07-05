@@ -1,19 +1,30 @@
+// server/src/routes/templateRoutes.ts
 import express from 'express';
-import { protect } from '../middleware/authMiddleware';
-import { upload } from '../middleware/uploadMiddleware';
 import {
-  createTemplate,
-  getTemplates,
-  deleteTemplate,
+    createTemplate,
+    getTemplates,
+    getTemplateById,
+    updateTemplate,
+    deleteTemplate
 } from '../controllers/templateController';
+import { protect } from '../middleware/authMiddleware';
+import multer from 'multer';
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 const router = express.Router();
 
-router
-  .route('/')
-  .get(protect, getTemplates)
-  .post(protect, upload.single('template_file'), createTemplate);
+// Apply the 'protect' middleware to all routes in this file
+router.use(protect);
 
-router.route('/:id').delete(protect, deleteTemplate);
+router.route('/')
+    .post(upload.single('templateFile'), createTemplate)
+    .get(getTemplates);
+
+router.route('/:id')
+    .get(getTemplateById)
+    .put(upload.single('templateFile'), updateTemplate)
+    .delete(deleteTemplate);
 
 export default router;
