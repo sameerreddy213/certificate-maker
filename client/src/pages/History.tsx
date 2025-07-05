@@ -20,7 +20,22 @@ import { Button } from '@/components/ui/button';
 import { Download, Eye, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/services/api';
-import { CertificateBatch, IndividualCertificate } from '@/types';
+export type CertificateBatch = {
+  id: string;
+  batch_name: string;
+  status: string;
+  generated_certificates: number;
+  total_certificates: number;
+  created_at: string;
+  batch_zip_url?: string;
+};
+
+export type IndividualCertificate = {
+  id: string;
+  recipientName: string;
+  status: 'generated' | 'failed';
+  // Add other fields as needed based on your API response
+};
 
 export const History = () => {
   const [batches, setBatches] = useState<CertificateBatch[]>([]);
@@ -31,20 +46,19 @@ export const History = () => {
   const { toast } = useToast();
 
   useEffect(() => {
+    const fetchBatches = async () => {
+      setLoading(true);
+      try {
+        const response = await api.get<CertificateBatch[]>('/batches');
+        setBatches(response.data);
+      } catch (error) {
+        toast({ title: 'Error', description: 'Failed to fetch batch history.', variant: 'destructive' });
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchBatches();
-  }, []);
-
-  const fetchBatches = async () => {
-    setLoading(true);
-    try {
-      const response = await api.get<CertificateBatch[]>('/batches');
-      setBatches(response.data);
-    } catch (error) {
-      toast({ title: 'Error', description: 'Failed to fetch batch history.', variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [toast]);
 
   const toggleRow = async (batchId: string) => {
     const newExpandedRow = expandedRow === batchId ? null : batchId;

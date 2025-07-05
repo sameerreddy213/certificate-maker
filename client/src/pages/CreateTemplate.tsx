@@ -77,11 +77,21 @@ export const CreateTemplate = () => {
         });
 
         navigate('/templates');
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Error creating template:', error);
+        let errorMessage = 'Failed to create template';
+        type ApiError = { response?: { data?: { message?: string } } };
+        if (
+          error &&
+          typeof error === 'object' &&
+          'response' in error &&
+          (error as ApiError).response?.data?.message
+        ) {
+          errorMessage = (error as ApiError).response!.data!.message!;
+        }
         toast({
             title: 'Error',
-            description: error.response?.data?.message || 'Failed to create template',
+            description: errorMessage,
             variant: 'destructive',
         });
     } finally {
@@ -157,7 +167,9 @@ export const CreateTemplate = () => {
                     )}
                     {form.formState.errors.template_file && (
                       <p className="text-sm text-destructive">
-                        {form.formState.errors.template_file.message}
+                        {typeof form.formState.errors.template_file?.message === 'string'
+                          ? form.formState.errors.template_file?.message
+                          : null}
                       </p>
                     )}
                   </div>

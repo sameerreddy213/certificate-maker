@@ -55,8 +55,9 @@ export const AuthPage = () => {
 
       toast({ title: 'Login successful!', description: 'Welcome back.' });
       navigate('/dashboard');
-    } catch (error: any) {
-      toast({ title: 'Login failed', description: error.message, variant: 'destructive' });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Login failed';
+      toast({ title: 'Login failed', description: errorMessage, variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -74,9 +75,9 @@ export const AuthPage = () => {
       if (!response.ok) {
         throw new Error(responseData.message || 'Signup failed');
       }
-      toast({ title: 'Signup successful!', description: 'Please log in to continue.' });
-    } catch (error: any) {
-      toast({ title: 'Signup failed', description: error.message, variant: 'destructive' });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Signup failed';
+      toast({ title: 'Signup failed', description: errorMessage, variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }

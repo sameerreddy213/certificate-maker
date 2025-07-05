@@ -288,7 +288,7 @@ export const GenerateCertificates = () => {
         description: `Batch ${responseData.batchId} is now processing.`,
       });
       startPollingBatchStatus(responseData.batchId); // Start polling status
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error starting generation:', error);
       setIsGenerating(false);
       setCurrentBatchStatus(null); // Clear status on error
@@ -298,7 +298,10 @@ export const GenerateCertificates = () => {
       }
       toast({
         title: 'Error',
-        description: error.message || 'Failed to start certificate generation.',
+        description:
+          error instanceof Error
+            ? error.message
+            : 'Failed to start certificate generation.',
         variant: 'destructive',
       });
     }
@@ -376,9 +379,11 @@ export const GenerateCertificates = () => {
                   {dataFile && (
                     <p className="text-sm text-muted-foreground">Selected: {dataFile.name}</p>
                   )}
-                  {form.formState.errors.dataFile && (
+                  {form.formState.errors.dataFile?.message && (
                     <p className="text-sm text-destructive">
-                      {form.formState.errors.dataFile.message}
+                      {typeof form.formState.errors.dataFile.message === 'string'
+                        ? form.formState.errors.dataFile.message
+                        : 'Invalid file.'}
                     </p>
                   )}
                 </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,8 +8,8 @@ import { CertificateBatch } from '@/types';
 import { FileText, Download, Users } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { Bar, BarChart as RechartsBarChart, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
-import api from '../services/api';
-import { useAuth } from '@/contexts/AuthContext'; // 1. Import useAuth
+import api from '../services/api'; // Assuming this is your axios instance configured with base URL
+import { useAuth } from '@/contexts/AuthContext'; // Using the useAuth hook for token
 
 interface DashboardStats {
   totalTemplates: number;
@@ -22,23 +22,53 @@ export const Dashboard = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentBatches, setRecentBatches] = useState<CertificateBatch[]>([]);
   const [loading, setLoading] = useState(true);
-  const { token } = useAuth(); // 2. Get the token from the auth context
+  const { token, user } = useAuth(); // Get the token and user from the auth context
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       setLoading(true);
       try {
-        const statsResponse = await api.get<DashboardStats>('/dashboard/stats');
+        // Ensure the API calls include the authorization header.
+        // Assuming 'api' is an axios instance that can be configured with interceptors
+        // or you can pass headers explicitly if 'api' is just an alias for axios.
+        const config = {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        };
+
+        // Fetch dashboard statistics
+        const statsResponse = await api.get<DashboardStats>('/dashboard/stats', config);
         setStats(statsResponse.data);
 
-        // API endpoint for batches seems to be just /batches, not /batches/data
-        const batchesResponse = await api.get<CertificateBatch[]>('/batches'); 
+        // Fetch recent batches
+        const batchesResponse = await api.get<CertificateBatch[]>('/batches', config); 
         setRecentBatches(batchesResponse.data.slice(0, 5));
-      } catch (error: any) {
+
+      } catch (error: unknown) {
         console.error('Error fetching dashboard data:', error);
+        let errorMessage = 'Could not load dashboard data.';
+
+        // Define a type for the error response
+        type ApiError = {
+          response?: {
+            data?: {
+              message?: string;
+            };
+          };
+        };
+
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'response' in error &&
+          typeof (error as ApiError).response?.data?.message === 'string'
+        ) {
+          errorMessage = (error as ApiError).response!.data!.message!;
+        }
         toast({
           title: 'Error',
-          description: error.response?.data?.message || 'Could not load dashboard data.',
+          description: errorMessage,
           variant: 'destructive',
         });
       } finally {
@@ -46,14 +76,13 @@ export const Dashboard = () => {
       }
     };
 
-    // 3. Only fetch data IF the token exists
+    // Only fetch data if the token exists. This prevents unauthenticated calls.
     if (token) {
       fetchDashboardData();
     } else {
-      // If there's no token, we shouldn't be on this page, but as a fallback, stop loading.
-      setLoading(false);
+      setLoading(false); // If no token, stop loading and wait for login/redirect
     }
-  }, [token]); // 4. Add token as a dependency
+  }, [token]); // Re-run effect if token changes
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -75,8 +104,6 @@ export const Dashboard = () => {
     );
   }
 
-  // --- The rest of your dashboard JSX remains the same ---
-  // (Paste the return statement from your original file here)
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -85,7 +112,7 @@ export const Dashboard = () => {
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
           <p className="text-muted-foreground">
-            An overview of your certificate generation activity.
+            Welcome, {user?.email || 'Guest'}! An overview of your certificate generation activity.
           </p>
         </div>
 

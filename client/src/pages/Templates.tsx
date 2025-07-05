@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Edit } from 'lucide-react'; // Added Edit icon for consistency
 import {
   Table,
   TableBody,
@@ -21,7 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/services/api'; // Your configured axios instance
-import { CertificateTemplate } from '@/types';
+import { CertificateTemplate } from '@/types'; // Assuming this type is correct
+import { useAuth } from '@/contexts/AuthContext'; // Import useAuth
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,24 +41,41 @@ export const Templates = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<string | null>(null);
   const { toast } = useToast();
+  const { token } = useAuth(); // Get the token from the auth context
 
-  useEffect(() => {
-    fetchTemplates();
-  }, []);
-
-  const fetchTemplates = async () => {
+  // Move fetchTemplates to component scope so it can be used elsewhere
+  const fetchTemplates = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.get<CertificateTemplate[]>('/templates');
+      const config = {
+        headers: {
+          Authorization: `Bearer ${token}`, // Use token from useAuth
+        },
+      };
+      const response = await api.get<CertificateTemplate[]>('/templates', config);
       setTemplates(response.data);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to fetch templates:', err);
-      setError('Failed to load templates. Please try again.');
+      type ErrorWithResponse = { response?: { data?: { message?: string } } };
+      if (typeof err === 'object' && err !== null && 'response' in err && typeof (err as ErrorWithResponse).response === 'object') {
+        setError((err as ErrorWithResponse).response?.data?.message || 'Failed to load templates. Please try again.');
+      } else {
+        setError('Failed to load templates. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
+  useEffect(() => {
+    // Only fetch templates if a token is available
+    if (token) {
+      fetchTemplates();
+    } else {
+      setLoading(false); // Stop loading if no token is present
+      setError('Authentication token not found. Please log in.');
+    }
+  }, [token, fetchTemplates]); // Add fetchTemplates as a dependency
 
   // This function is called when you click the trash icon
   const handleDeleteClick = (id: string) => {
@@ -65,29 +83,41 @@ export const Templates = () => {
     setShowDeleteConfirm(true); // This opens the dialog
   };
 
-  // This function is attached to the "Continue" button's onClick event
+  // This function is attached to the "Delete" button's onClick event in the AlertDialog
   const handleDeleteConfirm = async () => {
-    if (!templateToDelete) return;
+    if (!templateToDelete || !token) {
+      setShowDeleteConfirm(false); // Close dialog if no template to delete or no token
+      setTemplateToDelete(null);
+      return;
+    }
 
     try {
-      // This sends the request to the backend
-      await api.delete(`/templates/${templateToDelete}`);
-      
+      const config = {
+        headers: {
+          Authorization: `Bearer ${token}`, // Use token from useAuth
+        },
+      };
+      // Send the request to the backend
+      await api.delete(`/templates/${templateToDelete}`, config);
+
       toast({
         title: 'Success',
         description: 'Template deleted successfully.',
       });
-      // Update the UI to remove the deleted template
-      setTemplates(templates.filter((t) => t.id !== templateToDelete));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to delete template:', err);
+      let description = 'Could not delete the template.';
+      type ErrorWithResponse = { response?: { data?: { message?: string } } };
+      if (typeof err === 'object' && err !== null && 'response' in err && typeof (err as ErrorWithResponse).response === 'object') {
+        description = (err as ErrorWithResponse).response?.data?.message || description;
+      }
       toast({
         title: 'Error',
-        description: err.response?.data?.message || 'Could not delete the template.',
+        description,
         variant: 'destructive',
       });
     } finally {
-      // Close the dialog and reset the state
+      // Close the dialog and reset the state regardless of success or failure
       setShowDeleteConfirm(false);
       setTemplateToDelete(null);
     }
@@ -97,7 +127,9 @@ export const Templates = () => {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
-        <div className="container mx-auto px-4 py-8 text-center">Loading...</div>
+        <div className="container mx-auto px-4 py-8 flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
+        </div>
       </div>
     );
   }
@@ -106,7 +138,15 @@ export const Templates = () => {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
-        <div className="container mx-auto px-4 py-8 text-center text-red-500">{error}</div>
+        <div className="container mx-auto px-4 py-8 text-center text-red-500">
+          <p className="text-lg font-medium mb-4">Error loading templates:</p>
+          <p className="text-md">{error}</p>
+          {token ? (
+            <Button onClick={fetchTemplates} className="mt-4">Retry</Button>
+          ) : (
+            <p className="mt-4 text-sm text-muted-foreground">Please ensure you are logged in.</p>
+          )}
+        </div>
       </div>
     );
   }
@@ -160,9 +200,20 @@ export const Templates = () => {
                           {template.description || 'No description'}
                         </TableCell>
                         <TableCell>
-                          {new Date(template.createdAt).toLocaleDateString()}
+                          {new Date(template.created_at).toLocaleDateString()}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right flex items-center justify-end space-x-2">
+                          {/* Edit Button */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            asChild
+                          >
+                            <Link to={`/templates/edit/${template.id}`}>
+                              <Edit className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                          {/* Delete Button */}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -192,12 +243,11 @@ export const Templates = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete your template.
+              This action cannot be undone. This will permanently delete the template and all associated data.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            {/* The onClick handler is correctly placed here */}
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="bg-destructive hover:bg-destructive/90"
