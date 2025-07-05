@@ -1,118 +1,46 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-// import { useAuth } from '@/contexts/AuthContext'; // Removed as it's no longer used
-// import { supabase } from '@/integrations/supabase/client'; // Removed as it's no longer used
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
-import { ArrowLeft, Plus, X, Eye } from 'lucide-react';
+import { ArrowLeft, Plus, X, Upload } from 'lucide-react'; // Changed Eye to Upload
 import { useToast } from '@/hooks/use-toast';
 
+// Updated schema to include File object for template_file
 const templateSchema = z.object({
   name: z.string().min(1, 'Template name is required'),
   description: z.string().optional(),
-  template_type: z.enum(['html', 'docx', 'pptx']),
-  template_content: z.string().min(1, 'Template content is required'),
+  template_type: z.enum(['docx', 'pptx']), // Only docx and pptx allowed now
+  template_file: typeof window === 'undefined' ? z.any() : z.instanceof(File), // Handle File in browser
 });
 
 type TemplateForm = z.infer<typeof templateSchema>;
 
-const defaultHtmlTemplate = `
-<div style="
-  width: 800px;
-  height: 600px;
-  margin: 0 auto;
-  padding: 60px;
-  border: 2px solid #2563eb;
-  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-  font-family: 'Georgia', serif;
-  text-align: center;
-  position: relative;
-">
-  <div style="border: 1px solid #cbd5e1; padding: 40px; background: white; border-radius: 8px;">
-    <h1 style="
-      font-size: 48px;
-      color: #1e40af;
-      margin-bottom: 20px;
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-    ">Certificate of Achievement</h1>
-    
-    <p style="font-size: 18px; color: #475569; margin-bottom: 30px;">
-      This is to certify that
-    </p>
-    
-    <h2 style="
-      font-size: 36px;
-      color: #0f172a;
-      margin: 30px 0;
-      font-weight: bold;
-      border-bottom: 2px solid #2563eb;
-      padding-bottom: 10px;
-      display: inline-block;
-    ">{{recipientName}}</h2>
-    
-    <p style="font-size: 18px; color: #475569; margin: 30px 0; line-height: 1.6;">
-      has successfully completed the course
-    </p>
-    
-    <h3 style="
-      font-size: 24px;
-      color: #1e40af;
-      margin: 20px 0;
-      font-weight: bold;
-    ">{{courseName}}</h3>
-    
-    <p style="font-size: 16px; color: #475569; margin: 30px 0;">
-      on {{completionDate}}
-    </p>
-    
-    <div style="
-      margin-top: 50px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    ">
-      <div style="text-align: left;">
-        <div style="width: 200px; height: 2px; background: #2563eb; margin-bottom: 5px;"></div>
-        <p style="font-size: 14px; color: #475569;">Instructor Signature</p>
-      </div>
-      
-      <div style="text-align: right;">
-        <div style="width: 200px; height: 2px; background: #2563eb; margin-bottom: 5px;"></div>
-        <p style="font-size: 14px; color: #475569;">Date</p>
-      </div>
-    </div>
-  </div>
-</div>
-`.trim();
-
 export const CreateTemplate = () => {
-  // const { user } = useAuth(); // Removed as it's no longer used
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [placeholders, setPlaceholders] = useState<string[]>(['recipientName', 'courseName', 'completionDate']);
+  const [placeholders, setPlaceholders] = useState<string[]>([]); // Placeholders will be manually added for DOCX/PPTX
   const [newPlaceholder, setNewPlaceholder] = useState('');
-  const [previewMode, setPreviewMode] = useState(false);
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<TemplateForm>({
     resolver: zodResolver(templateSchema),
     defaultValues: {
-      template_type: 'html',
-      template_content: defaultHtmlTemplate,
+      template_type: 'docx', // Default to docx
+      name: '',
+      description: '',
     },
   });
 
-  const templateContent = form.watch('template_content');
+  const selectedFile = form.watch('template_file');
 
   const addPlaceholder = () => {
     if (newPlaceholder && !placeholders.includes(newPlaceholder)) {
@@ -125,31 +53,28 @@ export const CreateTemplate = () => {
     setPlaceholders(placeholders.filter(p => p !== placeholder));
   };
 
-  const insertPlaceholder = (placeholder: string) => {
-    const currentContent = form.getValues('template_content');
-    const newContent = currentContent + `{{${placeholder}}}`;
-    form.setValue('template_content', newContent);
-  };
-
-  const getPreviewContent = () => {
-    let content = templateContent;
-    placeholders.forEach(placeholder => {
-      const regex = new RegExp(`{{${placeholder}}}`, 'g');
-      content = content.replace(regex, `[${placeholder.toUpperCase()}]`);
-    });
-    return content;
-  };
+  // No direct "insert placeholder" into a text area anymore, as it's a file upload.
+  // The user will define these in their DOCX/PPTX files.
 
   const onSubmit = async (data: TemplateForm) => {
     setLoading(true);
+    const formData = new FormData();
+    formData.append('name', data.name);
+    if (data.description) formData.append('description', data.description);
+    formData.append('template_type', data.template_type);
+    formData.append('template_file', data.template_file);
+    formData.append('placeholders', JSON.stringify(placeholders)); // Send placeholders as a JSON string
+
     try {
         const response = await fetch('http://localhost:5000/api/templates', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...data, placeholders }),
+            body: formData, // FormData will set the correct Content-Type header
         });
 
-        if (!response.ok) throw new Error('Failed to create template');
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Failed to create template');
+        }
 
         toast({
             title: 'Success',
@@ -157,11 +82,11 @@ export const CreateTemplate = () => {
         });
 
         navigate('/templates');
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error creating template:', error);
         toast({
             title: 'Error',
-            description: 'Failed to create template',
+            description: error.message || 'Failed to create template',
             variant: 'destructive',
         });
     } finally {
@@ -182,7 +107,7 @@ export const CreateTemplate = () => {
           <div>
             <h1 className="text-3xl font-bold mb-2">Create New Template</h1>
             <p className="text-muted-foreground">
-              Design a certificate template with placeholders for dynamic content
+              Upload a DOCX/PPTX template and define placeholders for dynamic content.
             </p>
           </div>
         </div>
@@ -195,7 +120,7 @@ export const CreateTemplate = () => {
                 <CardHeader>
                   <CardTitle>Template Settings</CardTitle>
                   <CardDescription>
-                    Configure your template details and placeholders
+                    Configure your template details and define placeholders.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -215,19 +140,52 @@ export const CreateTemplate = () => {
 
                   <div className="space-y-2">
                     <Label htmlFor="description">Description</Label>
-                    <Textarea
+                    <Input
                       id="description"
                       placeholder="Enter template description"
                       {...form.register('description')}
                     />
                   </div>
 
+                  {/* Template File Upload */}
+                  <div className="space-y-2">
+                    <Label htmlFor="template_file">Upload Template (DOCX/PPTX)</Label>
+                    <Input
+                      id="template_file"
+                      type="file"
+                      accept=".docx,.pptx"
+                      ref={fileInputRef}
+                      onChange={(e) => form.setValue('template_file', e.target.files?.[0])}
+                    />
+                    {selectedFile && (
+                      <p className="text-sm text-muted-foreground">Selected: {selectedFile.name}</p>
+                    )}
+                    {form.formState.errors.template_file && (
+                      <p className="text-sm text-destructive">
+                        {form.formState.errors.template_file.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Template Type Selection */}
+                  <div className="space-y-2">
+                    <Label htmlFor="template_type">Template Type</Label>
+                    <select
+                      id="template_type"
+                      {...form.register('template_type')}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <option value="docx">DOCX</option>
+                      <option value="pptx">PPTX</option>
+                    </select>
+                  </div>
+
                   {/* Placeholders */}
                   <div className="space-y-4">
-                    <Label>Placeholders</Label>
+                    <Label>Define Placeholders in your DOCX/PPTX</Label>
                     <div className="flex space-x-2">
                       <Input
-                        placeholder="Add placeholder name"
+                        placeholder="e.g., recipientName"
                         value={newPlaceholder}
                         onChange={(e) => setNewPlaceholder(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addPlaceholder())}
@@ -242,12 +200,11 @@ export const CreateTemplate = () => {
                         <Badge
                           key={placeholder}
                           variant="secondary"
-                          className="cursor-pointer hover:bg-secondary/80"
-                          onClick={() => insertPlaceholder(placeholder)}
+                          className="cursor-default" // No longer directly inserting into editor
                         >
-                          {placeholder}
+                          {`{{${placeholder}}}`}
                           <X
-                            className="h-3 w-3 ml-1 hover:text-destructive"
+                            className="h-3 w-3 ml-1 hover:text-destructive cursor-pointer"
                             onClick={(e) => {
                               e.stopPropagation();
                               removePlaceholder(placeholder);
@@ -257,51 +214,28 @@ export const CreateTemplate = () => {
                       ))}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Click on a placeholder to insert it into your template
+                      These are the placeholders you should use in your uploaded DOCX/PPTX file (e.g., `{{recipientName}}`).
                     </p>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Template Editor */}
+            {/* Template Info (No direct editor or preview for files) */}
             <div className="lg:col-span-2">
-              <Card>
+              <Card className="h-full">
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Template Editor</CardTitle>
-                      <CardDescription>
-                        Create your HTML template with placeholders
-                      </CardDescription>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setPreviewMode(!previewMode)}
-                    >
-                      <Eye className="h-4 w-4 mr-2" />
-                      {previewMode ? 'Edit' : 'Preview'}
-                    </Button>
-                  </div>
+                  <CardTitle>Template Information</CardTitle>
+                  <CardDescription>
+                    Upload your DOCX/PPTX file with the defined placeholders.
+                  </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  {previewMode ? (
-                    <div className="border rounded-lg p-4 min-h-[500px] bg-white">
-                      <div dangerouslySetInnerHTML={{ __html: getPreviewContent() }} />
+                <CardContent className="h-full flex items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                        <Upload className="h-12 w-12 mx-auto mb-4" />
+                        <p className="text-lg">Upload your DOCX or PPTX file.</p>
+                        <p className="text-sm">Ensure your placeholders (e.g., `{{recipientName}}`) are correctly placed in the document.</p>
                     </div>
-                  ) : (
-                    <Textarea
-                      {...form.register('template_content')}
-                      placeholder="Enter your HTML template here..."
-                      className="min-h-[500px] font-mono text-sm"
-                    />
-                  )}
-                  {form.formState.errors.template_content && (
-                    <p className="text-sm text-destructive mt-2">
-                      {form.formState.errors.template_content.message}
-                    </p>
-                  )}
                 </CardContent>
               </Card>
             </div>

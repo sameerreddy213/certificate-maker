@@ -1,24 +1,34 @@
+// server/src/middleware/authMiddleware.ts
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import User, { IUser } from '../models/User'; // Assuming you have a User model
 
-// This custom interface adds a 'user' property to the Express Request type
-export interface AuthRequest extends Request {
-  user?: { id: string };
+// Extend the Express Request type to include the 'user' property
+export interface AuthenticatedRequest extends Request {
+  user?: IUser; // Add the user property, which will be populated by the middleware
 }
 
-export const protect = (req: AuthRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
+export const protect = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  let token;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
-      const token = authHeader.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_default_secret') as { user: { id: string } };
-      req.user = decoded.user; // Attach user payload to the request
+      // Get token from header
+      token = req.headers.authorization.split(' ')[1];
+
+      // Verify token
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET as string);
+
+      // Attach user from token payload to the request
+      req.user = await User.findById(decoded.id).select('-password');
       next();
     } catch (error) {
+      console.error(error);
       res.status(401).json({ message: 'Not authorized, token failed' });
     }
-  } else {
+  }
+
+  if (!token) {
     res.status(401).json({ message: 'Not authorized, no token' });
   }
 };

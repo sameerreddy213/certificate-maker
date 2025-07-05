@@ -1,46 +1,45 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
-import { ProtectedRoute } from "@/components/ProtectedRoute";
+// client/src/App.tsx
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import { Toaster } from './components/ui/toaster';
+import { ProtectedRoute } from './components/ProtectedRoute';
 
-// Corrected Imports for all page components
-import Index from "./pages/Index";
-import { AuthPage } from "./pages/AuthPage";
-import { Dashboard } from "./pages/Dashboard";
-import { Templates } from "./pages/Templates";
-import { CreateTemplate } from "./pages/CreateTemplate";
-import { GenerateCertificates } from "./pages/GenerateCertificates"; 
-import { History } from "./pages/History";
-import NotFound from "./pages/NotFound";
+// Corrected Imports: Use named imports { ComponentName } if the component file
+// exports using 'export const ComponentName' or 'export class ComponentName'
+import Index from './pages/Index'; // Confirmed as default export in previous messages
+import { AuthPage } from './pages/AuthPage'; // Changed to named import
+import { Dashboard } from './pages/Dashboard'; // Changed to named import
+import { Templates } from './pages/Templates'; // Changed to named import
+import { CreateTemplate } from './pages/CreateTemplate'; // Changed to named import
+import { GenerateCertificates } from './pages/GenerateCertificates'; // Changed to named import
+import { History } from './pages/History'; // Changed to named import
+import NotFound from './pages/NotFound'; // Use default import for NotFound
 
-const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/auth" element={<AuthPage />} />
-            
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
-            <Route path="/templates/create" element={<ProtectedRoute><CreateTemplate /></ProtectedRoute>} />
-            <Route path="/generate" element={<ProtectedRoute><GenerateCertificates /></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+function App() {
+  return (
+    <Router>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/auth" element={<AuthPage />} />
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+          {/* Protected Routes: This parent Route uses ProtectedRoute as its element.
+              ProtectedRoute will render an <Outlet /> where the nested routes will appear. */}
+          <Route element={<ProtectedRoute />}> {/* Changed from <ProtectedRoute><></></ProtectedRoute> */}
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/templates" element={<Templates />} />
+            <Route path="/templates/create" element={<CreateTemplate />} />
+            <Route path="/certificates/generate" element={<GenerateCertificates />} />
+            <Route path="/history" element={<History />} />
+          </Route>
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+        <Toaster />
+      </AuthProvider>
+    </Router>
+  );
+}
 
 export default App;

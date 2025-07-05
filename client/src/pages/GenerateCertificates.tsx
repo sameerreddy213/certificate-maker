@@ -1,29 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
-import { Navbar } from '@/components/Navbar';
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -39,139 +28,279 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Progress } from '@/components/ui/progress';
+import { Navbar } from '@/components/Navbar';
 import { useToast } from '@/hooks/use-toast';
-import { CertificateTemplate } from '@/types';
-import { Upload, FileText, Loader2, ChevronsRight, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Download, Plus, RefreshCw, X } from 'lucide-react';
+import * as XLSX from 'xlsx'; // Import xlsx library for frontend parsing
 
-// Zod schema for form validation
-const generateFormSchema = z.object({
-  batch_name: z.string().min(3, { message: 'Batch name must be at least 3 characters.' }),
-  template_id: z.string({ required_error: 'Please select a template.' }),
+// Define the schema for the generation form
+const generateSchema = z.object({
+  templateId: z.string().min(1, 'Please select a template'),
+  dataFile: typeof window === 'undefined' ? z.any() : z.instanceof(File, { message: 'Data file is required' }),
 });
 
-type GenerateForm = z.infer<typeof generateFormSchema>;
+type GenerateForm = z.infer<typeof generateSchema>;
+
+interface Template {
+  _id: string;
+  name: string;
+  placeholders: string[];
+}
+
+interface BatchStatus {
+  status: string;
+  generated: number;
+  total: number;
+  batchId?: string;
+  individualDownloads?: { recipientName: string; downloadUrl: string }[];
+  batchZipDownloadUrl?: string;
+}
 
 export const GenerateCertificates = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Component State
-  const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<CertificateTemplate | null>(null);
-  const [excelData, setExcelData] = useState<any[]>([]);
-  const [fileName, setFileName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [selectedTemplatePlaceholders, setSelectedTemplatePlaceholders] = useState<string[]>([]);
+  const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
+  const [mappings, setMappings] = useState<Record<string, string>>({}); // {excelHeader: templatePlaceholder}
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentBatchStatus, setCurrentBatchStatus] = useState<BatchStatus | null>(null);
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
-  // React Hook Form setup
   const form = useForm<GenerateForm>({
-    resolver: zodResolver(generateFormSchema),
+    resolver: zodResolver(generateSchema),
   });
 
-  // Fetch certificate templates on component mount
+  const selectedTemplateId = form.watch('templateId');
+  const dataFile = form.watch('dataFile');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch templates on component mount
   useEffect(() => {
     const fetchTemplates = async () => {
-      setLoadingTemplates(true);
-      const token = localStorage.getItem('token');
       try {
+        const token = localStorage.getItem('token'); // Assuming JWT token is stored
         const response = await fetch('http://localhost:5000/api/templates', {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         });
-        if (!response.ok) throw new Error('Failed to fetch templates.');
+        if (!response.ok) {
+          throw new Error('Failed to fetch templates');
+        }
         const data = await response.json();
         setTemplates(data);
       } catch (error) {
+        console.error('Error fetching templates:', error);
         toast({
           title: 'Error',
-          description: 'Could not load certificate templates.',
+          description: 'Failed to load templates.',
           variant: 'destructive',
         });
-      } finally {
-        setLoadingTemplates(false);
       }
     };
     fetchTemplates();
   }, [toast]);
 
-  // Update selected template object when form value changes
-  const selectedTemplateId = form.watch('template_id');
+  // Update placeholders when template is selected
   useEffect(() => {
-    const template = templates.find((t) => t.id === selectedTemplateId) || null;
-    setSelectedTemplate(template);
+    if (selectedTemplateId) {
+      const template = templates.find((t) => t._id === selectedTemplateId);
+      if (template) {
+        setSelectedTemplatePlaceholders(template.placeholders);
+        // Reset mappings if template changes
+        setMappings({});
+      }
+    } else {
+      setSelectedTemplatePlaceholders([]);
+      setMappings({});
+    }
   }, [selectedTemplateId, templates]);
 
-  // Handler for file input change
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setFileName(file.name);
+  // Handle data file upload and parse headers
+  useEffect(() => {
+    if (dataFile) {
       const reader = new FileReader();
       reader.onload = (e) => {
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: 'array' });
           const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet);
-          setExcelData(json);
-          toast({
-            title: 'File Processed',
-            description: `${json.length} rows loaded from ${file.name}`,
-          });
-        } catch (error) {
+          const sheet = workbook.Sheets[sheetName];
+          const json = XLSX.utils.sheet_to_json(sheet, { header: 1 }); // Get raw data to extract headers
+
+          if (json.length > 0) {
+            setExcelHeaders(json[0] as string[]); // First row is headers
+          } else {
+            setExcelHeaders([]);
             toast({
-                title: 'File Error',
-                description: 'Could not read the Excel file. Please ensure it is a valid .xlsx or .csv file.',
-                variant: 'destructive'
+              title: 'Warning',
+              description: 'Uploaded file is empty or has no headers.',
+              variant: 'default',
             });
+          }
+          setMappings({}); // Reset mappings on new file upload
+        } catch (error) {
+          console.error('Error reading file:', error);
+          setExcelHeaders([]);
+          toast({
+            title: 'Error',
+            description: 'Failed to read data file. Please ensure it is a valid Excel/CSV.',
+            variant: 'destructive',
+          });
         }
       };
-      reader.readAsArrayBuffer(file);
+      reader.readAsArrayBuffer(dataFile);
+    } else {
+      setExcelHeaders([]);
+      setMappings({});
+    }
+  }, [dataFile, toast]);
+
+  const handleMappingChange = (placeholder: string, excelHeader: string) => {
+    setMappings((prev) => ({ ...prev, [excelHeader]: placeholder }));
+  };
+
+  const removeMapping = (excelHeader: string) => {
+    setMappings((prev) => {
+      const newMappings = { ...prev };
+      delete newMappings[excelHeader];
+      return newMappings;
+    });
+  };
+
+  const startPollingBatchStatus = (batchId: string) => {
+    // Clear any existing polling interval
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`http://localhost:5000/api/batches/${batchId}/status`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!response.ok) {
+          throw new Error('Failed to fetch batch status');
+        }
+        const statusData: BatchStatus = await response.json();
+        setCurrentBatchStatus(statusData);
+
+        if (statusData.status === 'completed' || statusData.status === 'failed') {
+          clearInterval(interval); // Stop polling when done
+          setPollingInterval(null);
+          if (statusData.status === 'completed') {
+            toast({
+              title: 'Success',
+              description: 'Certificate batch generation completed!',
+            });
+            // Fetch full details including download links
+            fetchBatchDetails(batchId);
+          } else {
+            toast({
+              title: 'Error',
+              description: 'Certificate batch generation failed. Check server logs.',
+              variant: 'destructive',
+            });
+          }
+          setIsGenerating(false);
+        }
+      } catch (error) {
+        console.error('Error polling batch status:', error);
+        clearInterval(interval);
+        setPollingInterval(null);
+        setIsGenerating(false);
+        toast({
+          title: 'Error',
+          description: 'Failed to get batch status. Try again later.',
+          variant: 'destructive',
+        });
+      }
+    }, 3000); // Poll every 3 seconds
+    setPollingInterval(interval);
+  };
+
+  const fetchBatchDetails = async (batchId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`http://localhost:5000/api/batches/${batchId}/details`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch batch details');
+      }
+      const details: BatchStatus = await response.json();
+      setCurrentBatchStatus(details);
+    } catch (error) {
+      console.error('Error fetching batch details:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to retrieve batch download links.',
+        variant: 'destructive',
+      });
     }
   };
-  
-  // Check if all conditions are met to enable the generate button
-  const canGenerate = () => {
-      if (!selectedTemplate || excelData.length === 0) return false;
-      const headers = Object.keys(excelData[0]);
-      // Ensures every required field from the template is present in the Excel file headers
-      return selectedTemplate.required_fields.every(field => headers.includes(field));
-  };
-  
-  /**
-   * Handles the form submission to create a new certificate batch.
-   * This is the updated function you provided.
-   */
-  const onSubmit = async (formData: GenerateForm) => {
-    if (!selectedTemplate || !canGenerate()) return;
 
-    setLoading(true);
-    const token = localStorage.getItem('token');
+  const onSubmit = async (data: GenerateForm) => {
+    if (Object.keys(mappings).length !== selectedTemplatePlaceholders.length) {
+      toast({
+        title: 'Validation Error',
+        description: 'Please map all template placeholders to Excel columns.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsGenerating(true);
+    setCurrentBatchStatus({ status: 'pending', generated: 0, total: excelHeaders.length });
+
+    const formData = new FormData();
+    formData.append('templateId', data.templateId);
+    formData.append('dataFile', data.dataFile);
+    formData.append('mappings', JSON.stringify(mappings)); // Send mappings as JSON string
+
     try {
-      const response = await fetch('http://localhost:5000/api/batches', {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:5000/api/batches/generate', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        // Include excelData in the body
-        body: JSON.stringify({
-          template_id: formData.template_id,
-          batch_name: formData.batch_name,
-          total_certificates: excelData.length,
-          status: 'pending',
-          excelData: excelData // Send parsed Excel data to the backend
-        }),
+        body: formData,
       });
-      if (!response.ok) throw new Error('Failed to create batch');
 
-      toast({ title: 'Success', description: `Batch "${formData.batch_name}" created.` });
-      navigate('/history'); // Navigate to history page on success
-    } catch (error) {
-      console.error('Error creating batch:', error);
-      toast({ title: 'Error', description: 'Failed to create certificate batch', variant: 'destructive' });
-    } finally {
-      setLoading(false);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to start generation');
+      }
+
+      const responseData = await response.json();
+      toast({
+        title: 'Generation Started',
+        description: `Batch ${responseData.batchId} is now processing.`,
+      });
+      startPollingBatchStatus(responseData.batchId); // Start polling status
+    } catch (error: any) {
+      console.error('Error starting generation:', error);
+      setIsGenerating(false);
+      setCurrentBatchStatus(null); // Clear status on error
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        setPollingInterval(null);
+      }
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to start certificate generation.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -179,138 +308,234 @@ export const GenerateCertificates = () => {
     <div className="min-h-screen bg-background">
       <Navbar />
       <div className="container mx-auto px-4 py-8">
-        <Card className="max-w-4xl mx-auto">
-          <CardHeader>
-            <CardTitle className="text-2xl">Generate New Certificate Batch</CardTitle>
-            <CardDescription>
-              Select a template, upload recipient data, and start the generation process.
-            </CardDescription>
-          </CardHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)}>
-              <CardContent className="space-y-8">
-                {/* Step 1: Batch Details */}
-                <div className="p-4 border rounded-lg">
-                    <h3 className="font-semibold mb-4">Step 1: Batch Details</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <FormField
-                        control={form.control}
-                        name="batch_name"
-                        render={({ field }) => (
-                            <FormItem>
-                            <FormLabel>Batch Name</FormLabel>
-                            <FormControl>
-                                <Input placeholder="e.g., Q3 Developer Awards" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                            </FormItem>
-                        )}
-                        />
-                        <FormField
-                        control={form.control}
-                        name="template_id"
-                        render={({ field }) => (
-                            <FormItem>
-                            <FormLabel>Certificate Template</FormLabel>
-                            <Select onValueChange={field.onChange} defaultValue={field.value} disabled={loadingTemplates}>
-                                <FormControl>
-                                <SelectTrigger>
-                                    <SelectValue placeholder={loadingTemplates ? "Loading templates..." : "Select a template"} />
-                                </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                {templates.map((template) => (
-                                    <SelectItem key={template.id} value={template.id}>
-                                    {template.template_name}
-                                    </SelectItem>
+        <div className="flex items-center mb-8">
+          <Button variant="ghost" onClick={() => navigate('/dashboard')} className="mr-4">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Dashboard
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Generate Certificates</h1>
+            <p className="text-muted-foreground">
+              Select a template, upload data, and generate certificates in bulk.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Template Selection & Data Upload */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Select Template & Data</CardTitle>
+                <CardDescription>
+                  Choose your certificate template and upload the recipient data.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Template Select */}
+                <div className="space-y-2">
+                  <Label htmlFor="template">Certificate Template</Label>
+                  <Select
+                    onValueChange={(value) => form.setValue('templateId', value)}
+                    value={selectedTemplateId || ''}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.length === 0 ? (
+                        <SelectItem value="no-templates" disabled>
+                          No templates available. Create one first.
+                        </SelectItem>
+                      ) : (
+                        templates.map((template) => (
+                          <SelectItem key={template._id} value={template._id}>
+                            {template.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {form.formState.errors.templateId && (
+                    <p className="text-sm text-destructive">
+                      {form.formState.errors.templateId.message}
+                    </p>
+                  )}
+                </div>
+
+                {/* Data File Upload */}
+                <div className="space-y-2">
+                  <Label htmlFor="dataFile">Recipient Data (Excel/CSV)</Label>
+                  <Input
+                    id="dataFile"
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    ref={fileInputRef}
+                    onChange={(e) => form.setValue('dataFile', e.target.files?.[0])}
+                  />
+                  {dataFile && (
+                    <p className="text-sm text-muted-foreground">Selected: {dataFile.name}</p>
+                  )}
+                  {form.formState.errors.dataFile && (
+                    <p className="text-sm text-destructive">
+                      {form.formState.errors.dataFile.message}
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Field Mapping */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Map Fields</CardTitle>
+                <CardDescription>
+                  Match your Excel columns to template placeholders.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {selectedTemplateId && excelHeaders.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Template Placeholder</TableHead>
+                        <TableHead>Excel Column</TableHead>
+                        <TableHead>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedTemplatePlaceholders.map((placeholder) => (
+                        <TableRow key={placeholder}>
+                          <TableCell className="font-medium">
+                            `&#123;&#123;{placeholder}&#125;&#125;`
+                          </TableCell>
+                          <TableCell>
+                            <Select
+                              onValueChange={(value) => handleMappingChange(placeholder, value)}
+                              value={
+                                Object.keys(mappings).find((key) => mappings[key] === placeholder) ||
+                                ''
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select Excel Column" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {excelHeaders.map((header) => (
+                                  <SelectItem
+                                    key={header}
+                                    value={header}
+                                    // Disable if already mapped to another placeholder
+                                    disabled={Object.keys(mappings).some(
+                                      (k) => mappings[k] === placeholder && k !== header
+                                    )}
+                                  >
+                                    {header}
+                                  </SelectItem>
                                 ))}
-                                </SelectContent>
+                              </SelectContent>
                             </Select>
-                            <FormMessage />
-                            </FormItem>
-                        )}
-                        />
-                    </div>
-                </div>
+                          </TableCell>
+                          <TableCell>
+                            {Object.keys(mappings).some((key) => mappings[key] === placeholder) && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() =>
+                                  removeMapping(
+                                    Object.keys(mappings).find((key) => mappings[key] === placeholder) || ''
+                                  )
+                                }
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <p className="text-muted-foreground text-center py-4">
+                    Select a template and upload a data file to start mapping.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
-                {/* Step 2: Upload Data */}
-                <div className={`p-4 border rounded-lg ${!selectedTemplate ? 'opacity-50' : ''}`}>
-                    <h3 className="font-semibold mb-4">Step 2: Upload Recipient Data</h3>
-                    {!selectedTemplate ? (
-                        <p className='text-sm text-muted-foreground'>Please select a template first.</p>
-                    ) : (
-                        <div>
-                            <FormLabel htmlFor="file-upload">Excel/CSV File</FormLabel>
-                            <div className="mt-2 flex items-center gap-4">
-                                <Button asChild variant="outline">
-                                <label htmlFor="file-upload" className="cursor-pointer">
-                                    <Upload className="h-4 w-4 mr-2" />
-                                    Choose File
-                                </label>
-                                </Button>
-                                <Input id="file-upload" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .csv" />
-                                {fileName && <p className="text-sm text-muted-foreground">{fileName}</p>}
-                            </div>
-                            <FormDescription className="mt-2">
-                                Your file must contain the following columns: <br />
-                                <code className="bg-muted px-2 py-1 rounded-md text-xs">{selectedTemplate.required_fields.join(', ')}</code>
-                            </FormDescription>
-                        </div>
+          {/* Generation Progress & Download */}
+          {isGenerating && currentBatchStatus && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Generation Progress</CardTitle>
+                <CardDescription>
+                  Tracking batch: {currentBatchStatus.batchId}
+                  {currentBatchStatus.status === 'processing' && (
+                    <span className="ml-2 text-blue-500 flex items-center">
+                      <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> Processing...
+                    </span>
+                  )}
+                  {currentBatchStatus.status === 'completed' && (
+                    <span className="ml-2 text-green-500">Completed!</span>
+                  )}
+                  {currentBatchStatus.status === 'failed' && (
+                    <span className="ml-2 text-red-500">Failed!</span>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Progress
+                  value={(currentBatchStatus.generated / currentBatchStatus.total) * 100}
+                  className="w-full"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Generated {currentBatchStatus.generated} of {currentBatchStatus.total} certificates.
+                </p>
+
+                {currentBatchStatus.status === 'completed' && (
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-semibold">Download Options:</h3>
+                    {currentBatchStatus.batchZipDownloadUrl && (
+                      <a href={currentBatchStatus.batchZipDownloadUrl} download className="block">
+                        <Button className="w-full">
+                          <Download className="h-4 w-4 mr-2" /> Download All as ZIP
+                        </Button>
+                      </a>
                     )}
-                </div>
-
-                {/* Step 3: Preview and Generate */}
-                {excelData.length > 0 && (
-                  <div className="p-4 border rounded-lg">
-                    <h3 className="font-semibold mb-4">Step 3: Preview Data & Generate</h3>
-                     {!canGenerate() && (
-                         <div className="p-3 mb-4 text-destructive-foreground bg-destructive/80 rounded-md flex items-center gap-2">
-                           <AlertCircle className="h-4 w-4"/>
-                           <p className="text-sm">File headers do not match template requirements. Please check your file and re-upload.</p>
-                         </div>
-                     )}
-                    <div className="max-h-60 overflow-y-auto border rounded-md">
-                        <Table>
-                        <TableHeader className="sticky top-0 bg-background">
-                            <TableRow>
-                            {Object.keys(excelData[0]).map(key => (
-                                <TableHead key={key}>{key}</TableHead>
-                            ))}
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {excelData.slice(0, 5).map((row, index) => (
-                            <TableRow key={index}>
-                                {Object.values(row).map((cell: any, i: number) => (
-                                <TableCell key={i}>{String(cell)}</TableCell>
-                                ))}
-                            </TableRow>
-                            ))}
-                        </TableBody>
-                        </Table>
-                    </div>
-                    {excelData.length > 5 && <p className="text-xs text-muted-foreground mt-2 text-center">Showing first 5 of {excelData.length} rows.</p>}
+                    {currentBatchStatus.individualDownloads && currentBatchStatus.individualDownloads.length > 0 && (
+                      <div className="max-h-60 overflow-y-auto border rounded-md p-2">
+                        <p className="text-sm text-muted-foreground mb-2">Individual Certificates:</p>
+                        {currentBatchStatus.individualDownloads.map((cert, index) => (
+                          <a key={index} href={cert.downloadUrl} download className="block mb-1">
+                            <Button variant="outline" size="sm" className="w-full justify-between">
+                              <span>{cert.recipientName || `Certificate ${index + 1}`}</span>
+                              <Download className="h-3 w-3 ml-2" />
+                            </Button>
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
-              <CardFooter>
-                <Button type="submit" disabled={!canGenerate() || loading}>
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      Generate Certificates
-                      <ChevronsRight className="h-4 w-4 ml-2" />
-                    </>
-                  )}
-                </Button>
-              </CardFooter>
-            </form>
-          </Form>
-        </Card>
+            </Card>
+          )}
+
+          <div className="flex justify-end space-x-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/dashboard')}
+              disabled={isGenerating}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isGenerating}>
+              {isGenerating ? 'Generating...' : 'Start Generation'}
+            </Button>
+          </div>
+        </form>
       </div>
     </div>
   );

@@ -1,75 +1,169 @@
-import { Response } from 'express';
+// server/src/controllers/templateController.ts
+import { Response } from 'express'; // Only need Response directly now
 import CertificateTemplate from '../models/CertificateTemplate';
-import { AuthRequest } from '../middleware/authMiddleware'; // Import our custom request type
-import mongoose from 'mongoose'; // Import mongoose to check for validation errors
+import { AuthenticatedRequest } from '../middleware/authMiddleware'; // Correctly import AuthenticatedRequest
+import fs from 'fs'; // Node.js file system module
+import path from 'path';
 
-// Get templates ONLY for the logged-in user
-export const getTemplates = async (req: AuthRequest, res: Response) => {
+// Define a custom Request type to include `file` from multer,
+// and inherit `body`, `params`, `query`, `user` from AuthenticatedRequest
+interface TemplateRequest extends AuthenticatedRequest {
+  file?: Express.Multer.File; // Add the file property from multer
+}
+
+// @desc    Create a new certificate template
+// @route   POST /api/templates
+// @access  Private
+export const createTemplate = async (req: TemplateRequest, res: Response) => {
   try {
-    // Ensure userId is present before querying
-    if (!req.user?.id) {
-      return res.status(401).json({ message: 'User not authenticated.' });
+    // req.body, req.file, req.user are now correctly typed due to interface extension
+    const { name, description, template_type, placeholders: placeholdersJson } = req.body;
+    const templateFile = req.file;
+
+    if (!templateFile) {
+      return res.status(400).json({ message: 'Template file is required.' });
     }
-    const templates = await CertificateTemplate.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(templates);
+    if (!name || !template_type || !placeholdersJson) {
+        // If template_file was uploaded but other required fields are missing, delete the file
+        if (templateFile && fs.existsSync(templateFile.path)) {
+            fs.unlinkSync(templateFile.path);
+        }
+        return res.status(400).json({ message: 'Please provide template name, type, and placeholders.' });
+    }
+
+    // Parse placeholders from JSON string (sent as JSON.stringify from frontend)
+    let placeholders: string[] = [];
+    try {
+      placeholders = JSON.parse(placeholdersJson);
+      if (!Array.isArray(placeholders)) {
+        throw new Error('Placeholders must be an array.');
+      }
+    } catch (parseError) {
+        if (templateFile && fs.existsSync(templateFile.path)) {
+            fs.unlinkSync(templateFile.path);
+        }
+        return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
+    }
+
+    const newTemplate = new CertificateTemplate({
+      name,
+      description,
+      templateFilePath: templateFile.path, // Store the full path where multer saved the file
+      templateType: template_type,
+      placeholders,
+      owner: req.user?.id, // Use optional chaining for req.user just in case, though protect middleware should ensure it
+    });
+
+    const savedTemplate = await newTemplate.save();
+    res.status(201).json(savedTemplate);
   } catch (error: any) {
-    console.error('Error fetching templates:', error); // Log the actual error
-    res.status(500).json({ message: 'Error fetching templates' });
+    console.error('Error creating template:', error);
+    // If an error occurs during saving, clean up the uploaded file if it exists
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
   }
 };
 
-// Create a template and associate it with the logged-in user
-export const createTemplate = async (req: AuthRequest, res: Response) => {
-    try {
-        // Explicitly check if userId is available from authentication
-        if (!req.user?.id) {
-            return res.status(401).json({ message: 'Authentication required to create a template.' });
-        }
-
-        const newTemplate = new CertificateTemplate({
-            ...req.body,
-            userId: req.user.id, // Set the userId from the request
-        });
-
-        await newTemplate.save();
-        res.status(201).json(newTemplate);
-    } catch (error: any) {
-        console.error('Error creating template:', error); // Log the actual error for backend debugging
-
-        // Improve error messaging for validation errors
-        if (error instanceof mongoose.Error.ValidationError) {
-            const errors = Object.values(error.errors).map((err: any) => err.message);
-            return res.status(400).json({ message: 'Validation failed', errors });
-        } else if (error.code === 11000) { // Duplicate key error (e.g., if you add unique constraint later)
-            return res.status(409).json({ message: 'Duplicate key error: A template with this name might already exist.' });
-        }
-        
-        res.status(500).json({ message: 'Failed to create template due to a server error.' });
-    }
+// @desc    Get all templates for the authenticated user
+// @route   GET /api/templates
+// @access  Private
+export const getTemplates = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const templates = await CertificateTemplate.find({ owner: req.user?.id }).select('-templateFilePath'); // Don't send file path to client
+    res.status(200).json(templates);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
 };
 
-// Delete a template belonging to the logged-in user
-export const deleteTemplate = async (req: AuthRequest, res: Response) => {
-    try {
-        // Ensure userId is present
-        if (!req.user?.id) {
-            return res.status(401).json({ message: 'Authentication required to delete a template.' });
-        }
-
-        // Find the template by its ID and ensure it belongs to the authenticated user
-        const template = await CertificateTemplate.findOne({ _id: req.params.id, userId: req.user.id });
-
-        if (!template) {
-            // If no template is found, return a 404 error
-            return res.status(404).json({ message: 'Template not found or you do not have permission to delete it.' });
-        }
-
-        // Use the deleteOne method on the document
-        await template.deleteOne();
-
-        res.json({ message: 'Template removed successfully.' });
-    } catch (error: any) {
-        console.error('Error deleting template:', error); // Log the actual error
-        res.status(500).json({ message: 'Failed to delete template due to a server error.' });
+// @desc    Get a single template by ID
+// @route   GET /api/templates/:id
+// @access  Private (only if owner matches)
+export const getTemplateById = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const template = await CertificateTemplate.findOne({ _id: req.params.id, owner: req.user?.id });
+    if (!template) {
+      return res.status(404).json({ message: 'Template not found or you do not have access.' });
     }
+    res.status(200).json(template);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+};
+
+// @desc    Update a template
+// @route   PUT /api/templates/:id
+// @access  Private
+export const updateTemplate = async (req: TemplateRequest, res: Response) => {
+  try {
+    const { name, description, template_type, placeholders: placeholdersJson } = req.body;
+    const templateFile = req.file;
+
+    const existingTemplate = await CertificateTemplate.findById(req.params.id);
+    if (!existingTemplate || String(existingTemplate.owner) !== String(req.user?.id)) {
+      if (templateFile) fs.unlinkSync(templateFile.path); // Clean up if not authorized
+      return res.status(404).json({ message: 'Template not found or you do not have access.' });
+    }
+
+    // Prepare update fields
+    const updateFields: any = { name, description, templateType: template_type };
+    if (placeholdersJson) {
+      try {
+        updateFields.placeholders = JSON.parse(placeholdersJson);
+        if (!Array.isArray(updateFields.placeholders)) {
+            throw new Error('Placeholders must be an array.');
+        }
+      } catch (parseError) {
+          if (templateFile) fs.unlinkSync(templateFile.path);
+          return res.status(400).json({ message: 'Invalid placeholders format. Must be a JSON array of strings.' });
+      }
+    }
+
+    if (templateFile) {
+      // Delete old file if a new one is uploaded
+      if (existingTemplate.templateFilePath && fs.existsSync(existingTemplate.templateFilePath)) {
+        fs.unlinkSync(existingTemplate.templateFilePath);
+      }
+      updateFields.templateFilePath = templateFile.path;
+    }
+
+    const updatedTemplate = await CertificateTemplate.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateFields },
+      { new: true, runValidators: true } // Return the updated document and run schema validators
+    ).select('-templateFilePath');
+
+    res.status(200).json(updatedTemplate);
+  } catch (error: any) {
+    console.error('Error updating template:', error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+};
+
+// @desc    Delete a template
+// @route   DELETE /api/templates/:id
+// @access  Private
+export const deleteTemplate = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const template = await CertificateTemplate.findOne({ _id: req.params.id, owner: req.user?.id });
+    if (!template) {
+      return res.status(404).json({ message: 'Template not found or you do not have access.' });
+    }
+
+    // Delete the physical file from the server
+    if (template.templateFilePath && fs.existsSync(template.templateFilePath)) {
+      fs.unlinkSync(template.templateFilePath);
+    }
+
+    await template.deleteOne(); // Use deleteOne() for Mongoose 5.x+
+    res.status(200).json({ message: 'Template deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting template:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
 };

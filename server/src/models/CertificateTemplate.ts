@@ -1,52 +1,24 @@
-// Path: sameerreddy213/certificate-maker/certificate-maker-38a71d2e924d8ea6a1c43ab9a2b6890be916c91b/server/src/models/CertificateTemplate.ts
-import mongoose, { Schema, Document } from 'mongoose';
+// server/src/models/CertificateTemplate.ts
+import mongoose, { Document, Schema } from 'mongoose';
 
-// Define the interface for the CertificateTemplate document
 export interface ICertificateTemplate extends Document {
-  userId: mongoose.Types.ObjectId;
   name: string;
-  description?: string; // Optional field
-  template_type: 'html' | 'docx' | 'pptx'; // Enforce specific types
-  template_content: string;
-  placeholders: string[]; // Array of strings to store placeholders
+  description?: string;
+  templateFilePath: string; // Stores the local path where the template file is saved
+  templateType: 'docx' | 'pptx'; // Stores the type of the template file
+  placeholders: string[]; // Stores the list of placeholders defined by the user
+  owner: mongoose.Schema.Types.ObjectId; // Link to the user who uploaded the template
   createdAt: Date;
   updatedAt: Date;
 }
 
-// Define the Mongoose schema for the CertificateTemplate
 const CertificateTemplateSchema: Schema = new Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // Reference to the User model
-    required: true // userId is mandatory for each template
-  },
-  name: {
-    type: String,
-    required: true, // Template name is mandatory
-    trim: true // Remove whitespace from both ends of a string
-  },
-  description: {
-    type: String,
-    trim: true
-  },
-  template_type: {
-    type: String,
-    enum: ['html', 'docx', 'pptx'], // Restrict template_type to these specific values
-    required: true
-  },
-  template_content: {
-    type: String,
-    required: true // Template content (e.g., HTML string) is mandatory
-  },
-  placeholders: {
-    type: [String], // Array of strings for dynamic placeholders
-    default: [] // Default to an empty array if no placeholders are provided
-  }
-}, {
-  timestamps: true // Automatically adds createdAt and updatedAt timestamps
-});
+  name: { type: String, required: true },
+  description: { type: String },
+  templateFilePath: { type: String, required: true },
+  templateType: { type: String, enum: ['docx', 'pptx'], required: true },
+  placeholders: [{ type: String }], // Array of strings
+  owner: { type: Schema.Types.ObjectId, ref: 'User', required: true }, // Assumes a User model exists
+}, { timestamps: true });
 
-// Create and export the Mongoose model
-const CertificateTemplate = mongoose.model<ICertificateTemplate>('CertificateTemplate', CertificateTemplateSchema);
-
-export default CertificateTemplate;
+export default mongoose.model<ICertificateTemplate>('CertificateTemplate', CertificateTemplateSchema);
