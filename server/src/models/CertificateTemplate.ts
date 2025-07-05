@@ -1,7 +1,7 @@
 import { Schema, model, Document } from 'mongoose';
 
 export interface ICertificateTemplate extends Document {
-  userId: Schema.Types.ObjectId; // Add this
+  userId: Schema.Types.ObjectId; // Ensures this field exists in the interface
   name: string;
   description: string;
   template_type: string;
@@ -11,7 +11,8 @@ export interface ICertificateTemplate extends Document {
 }
 
 const CertificateTemplateSchema = new Schema({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true }, // Add this
+  // Add the userId field, make it required, and link it to the User model
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   description: { type: String },
   template_type: { type: String, required: true, default: 'html' },

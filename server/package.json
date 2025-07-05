@@ -4,8 +4,8 @@
   "description": "Backend for the Certificate Generator",
   "main": "dist/server.js",
   "scripts": {
-    "start": "ts-node-dev src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "start": "ts-node-dev src/server.ts"
   },
   "author": "",
   "license": "ISC",

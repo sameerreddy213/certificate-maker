@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { register, login } from '../controllers/authController'; // Add login
+import { getTemplates, createTemplate } from '../controllers/templateController';
+import { protect } from '../middleware/authMiddleware'; // Import the middleware
 
 const router = Router();
 
-router.post('/register', register);
-router.post('/login', login); // Add this line
+// Apply the 'protect' middleware to both routes
+router.route('/').get(protect, getTemplates).post(protect, createTemplate);
 
 export default router;

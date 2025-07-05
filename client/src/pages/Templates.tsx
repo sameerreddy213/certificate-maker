@@ -59,13 +59,14 @@ export const Templates = () => {
   const deleteTemplate = async (templateId: string) => {
     const token = localStorage.getItem('token');
     try {
-      const response = await fetch(`http://localhost:5000/api/templates/${templateId}`, { // This endpoint needs to be created on the backend
+      const response = await fetch(`http://localhost:5000/api/templates/${templateId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) throw new Error('Failed to delete template');
       
-      setTemplates(templates.filter(t => t.id !== templateId));
+      // Refetch templates to update the list
+      fetchTemplates();
       toast({ title: 'Success', description: 'Template deleted successfully' });
     } catch (error) {
       console.error('Error deleting template:', error);

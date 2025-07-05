@@ -1,354 +1,316 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { Navbar } from '@/components/Navbar';
-import { CertificateBatch, Certificate } from '@/types';
+import { Button } from '@/components/ui/button';
 import {
-  Download,
-  Search,
-  Eye,
-  Clock,
-  CheckCircle,
-  XCircle,
-  FileText,
-  Calendar,
-  User
-} from 'lucide-react';
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
-import { format } from 'date-fns';
+import { CertificateTemplate } from '@/types';
+import { Upload, FileText, Loader2, ChevronsRight, AlertCircle } from 'lucide-react';
 
-export const History = () => {
-  const [batches, setBatches] = useState<CertificateBatch[]>([]);
-  const [filteredBatches, setFilteredBatches] = useState<CertificateBatch[]>([]);
-  const [selectedBatch, setSelectedBatch] = useState<CertificateBatch | null>(null);
-  const [certificates, setCertificates] = useState<Certificate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [loadingCertificates, setLoadingCertificates] = useState(false);
+// Zod schema for form validation
+const generateFormSchema = z.object({
+  batch_name: z.string().min(3, { message: 'Batch name must be at least 3 characters.' }),
+  template_id: z.string({ required_error: 'Please select a template.' }),
+});
+
+type GenerateForm = z.infer<typeof generateFormSchema>;
+
+export const GenerateCertificates = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
 
+  // Component State
+  const [templates, setTemplates] = useState<CertificateTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<CertificateTemplate | null>(null);
+  const [excelData, setExcelData] = useState<any[]>([]);
+  const [fileName, setFileName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+
+  // React Hook Form setup
+  const form = useForm<GenerateForm>({
+    resolver: zodResolver(generateFormSchema),
+  });
+
+  // Fetch certificate templates on component mount
   useEffect(() => {
-    fetchBatches();
-  }, []);
-
-  useEffect(() => {
-    const filtered = batches.filter(batch =>
-      batch.batch_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (batch.template_name && batch.template_name.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
-    setFilteredBatches(filtered);
-  }, [batches, searchTerm]);
-
-  const fetchBatches = async () => {
-    setLoading(true);
-    // Get the authentication token from localStorage
-    const token = localStorage.getItem('token');
-
-    // Define the headers to include Content-Type and Authorization
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}` // Attach the token as a Bearer token
-    };
-
-    try {
-      const response = await fetch('http://localhost:5000/api/batches', { headers });
-      if (!response.ok) {
-        // If response is not ok, check for specific status codes
-        if (response.status === 401) {
-          throw new Error('Unauthorized: Please log in again.');
-        }
-        throw new Error('Failed to fetch batches');
+    const fetchTemplates = async () => {
+      setLoadingTemplates(true);
+      const token = localStorage.getItem('token');
+      try {
+        const response = await fetch('http://localhost:5000/api/templates', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error('Failed to fetch templates.');
+        const data = await response.json();
+        setTemplates(data);
+      } catch (error) {
+        toast({
+          title: 'Error',
+          description: 'Could not load certificate templates.',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoadingTemplates(false);
       }
-      const data = await response.json();
-      // Sort batches by creation date, most recent first
-      const sortedData = data.sort((a: CertificateBatch, b: CertificateBatch) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-      setBatches(sortedData);
-    } catch (error: any) {
-      console.error('Error fetching batches:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to fetch certificate batches. Please ensure you are authenticated.',
-        variant: 'destructive',
+    };
+    fetchTemplates();
+  }, [toast]);
+
+  // Update selected template object when form value changes
+  const selectedTemplateId = form.watch('template_id');
+  useEffect(() => {
+    const template = templates.find((t) => t.id === selectedTemplateId) || null;
+    setSelectedTemplate(template);
+  }, [selectedTemplateId, templates]);
+
+  // Handler for file input change
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet);
+          setExcelData(json);
+          toast({
+            title: 'File Processed',
+            description: `${json.length} rows loaded from ${file.name}`,
+          });
+        } catch (error) {
+            toast({
+                title: 'File Error',
+                description: 'Could not read the Excel file. Please ensure it is a valid .xlsx or .csv file.',
+                variant: 'destructive'
+            });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  };
+  
+  // Check if all conditions are met to enable the generate button
+  const canGenerate = () => {
+      if (!selectedTemplate || excelData.length === 0) return false;
+      const headers = Object.keys(excelData[0]);
+      // Ensures every required field from the template is present in the Excel file headers
+      return selectedTemplate.required_fields.every(field => headers.includes(field));
+  };
+  
+  /**
+   * Handles the form submission to create a new certificate batch.
+   * This is the updated function you provided.
+   */
+  const onSubmit = async (formData: GenerateForm) => {
+    if (!selectedTemplate || !canGenerate()) return;
+
+    setLoading(true);
+    const token = localStorage.getItem('token');
+    try {
+      const response = await fetch('http://localhost:5000/api/batches', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        // Include excelData in the body
+        body: JSON.stringify({
+          template_id: formData.template_id,
+          batch_name: formData.batch_name,
+          total_certificates: excelData.length,
+          status: 'pending',
+          excelData: excelData // Send parsed Excel data to the backend
+        }),
       });
+      if (!response.ok) throw new Error('Failed to create batch');
+
+      toast({ title: 'Success', description: `Batch "${formData.batch_name}" created.` });
+      navigate('/history'); // Navigate to history page on success
+    } catch (error) {
+      console.error('Error creating batch:', error);
+      toast({ title: 'Error', description: 'Failed to create certificate batch', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchCertificates = async (batchId: string) => {
-    setLoadingCertificates(true);
-    // Get the authentication token from localStorage
-    const token = localStorage.getItem('token');
-
-    // Define the headers to include Content-Type and Authorization
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}` // Attach the token as a Bearer token
-    };
-
-    try {
-      // This requires a new endpoint: GET /api/batches/:id/certificates
-      const response = await fetch(`http://localhost:5000/api/batches/${batchId}/certificates`, { headers });
-      if (!response.ok) {
-        // If response is not ok, check for specific status codes
-        if (response.status === 401) {
-          throw new Error('Unauthorized: Please log in again.');
-        }
-        throw new Error('Failed to fetch certificates');
-      }
-      const data = await response.json();
-      setCertificates(data || []);
-    } catch (error: any) {
-      console.error('Error fetching certificates:', error);
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to fetch certificates for this batch. Please ensure you are authenticated.',
-        variant: 'destructive',
-      });
-      setCertificates([]); // Clear previous certificates on error
-    } finally {
-      setLoadingCertificates(false);
-    }
-  };
-
-  const handleViewBatch = (batch: CertificateBatch) => {
-    setSelectedBatch(batch);
-    fetchCertificates(batch.id);
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'processing':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      case 'failed':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case 'processing':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-      case 'failed':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-
       <div className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Certificate History</h1>
-            <p className="text-muted-foreground">
-              View and manage your generated certificate batches
-            </p>
-          </div>
-          <Button asChild>
-            <Link to="/generate">
-              <FileText className="h-4 w-4 mr-2" />
-              Generate New Batch
-            </Link>
-          </Button>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Batches List */}
-          <div className="lg:col-span-2">
-            {/* Search */}
-            <div className="relative mb-6">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-              <Input
-                placeholder="Search batches by name or template..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Batches */}
-            {filteredBatches.length === 0 ? (
-              <Card className="text-center py-12">
-                <CardContent>
-                  <FileText className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-                  <h3 className="text-lg font-semibold mb-2">
-                    {searchTerm ? 'No batches found' : 'No certificate batches yet'}
-                  </h3>
-                  <p className="text-muted-foreground mb-6">
-                    {searchTerm
-                      ? 'Try adjusting your search criteria'
-                      : 'Create your first certificate batch to get started'
-                    }
-                  </p>
-                  {!searchTerm && (
-                    <Button asChild>
-                      <Link to="/generate">
-                        <FileText className="h-4 w-4 mr-2" />
-                        Generate Certificates
-                      </Link>
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                {filteredBatches.map((batch) => (
-                  <Card
-                    key={batch.id}
-                    className={`hover:shadow-md transition-shadow cursor-pointer ${
-                      selectedBatch?.id === batch.id ? 'ring-2 ring-primary' : ''
-                    }`}
-                    onClick={() => handleViewBatch(batch)}
-                  >
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg flex items-center">
-                          {getStatusIcon(batch.status)}
-                          <span className="ml-2">{batch.batch_name}</span>
-                        </CardTitle>
-                        <Badge className={getStatusColor(batch.status)}>
-                          {batch.status}
-                        </Badge>
-                      </div>
-                      <CardDescription>
-                        Template: {batch.template_name || 'Unknown'}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="flex items-center">
-                          <User className="h-4 w-4 mr-2 text-muted-foreground" />
-                          <span>{batch.generated_certificates}/{batch.total_certificates} generated</span>
-                        </div>
-                        <div className="flex items-center">
-                          <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
-                          <span>{format(new Date(batch.created_at), 'MMM d,yyyy')}</span>
-                        </div>
-                      </div>
-
-                      {batch.status === 'completed' && (
-                        <div className="mt-4">
-                          {/* Note: Direct <a> tags for download do not send custom headers.
-                              If the backend download endpoint is protected, you might need
-                              to implement a JavaScript-based download (fetch blob, createObjectURL). */}
-                          <Button asChild size="sm" variant="outline" className="w-full">
-                            <a href={`http://localhost:5000/api/batches/${batch.id}/download`} download>
-                              <Download className="h-4 w-4 mr-2" />
-                              Download All Certificates
-                            </a>
-                          </Button>
-                        </div>
-                      )}
-
-                      {batch.error_message && (
-                        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                          <p className="text-sm text-red-600">{batch.error_message}</p>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Certificate Details */}
-          <div className="lg:col-span-1">
-            <Card className="sticky top-8">
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Eye className="h-5 w-5 mr-2" />
-                  Certificate Details
-                </CardTitle>
-                <CardDescription>
-                  {selectedBatch
-                    ? `Individual certificates for "${selectedBatch.batch_name}"`
-                    : 'Select a batch to view individual certificates'
-                  }
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {!selectedBatch ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>Select a batch from the list to view individual certificates</p>
-                  </div>
-                ) : loadingCertificates ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  </div>
-                ) : certificates.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <p>No certificates found for this batch.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {certificates.map((certificate) => (
-                      <div
-                        key={certificate.id}
-                        className="p-3 border rounded-lg hover:bg-accent/50 transition-colors"
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-medium text-sm">{certificate.recipient_name}</h4>
-                          <Badge
-                            variant={certificate.status === 'generated' ? 'default' : 'secondary'}
-                            className="text-xs"
-                          >
-                            {certificate.status}
-                          </Badge>
-                        </div>
-                        {certificate.recipient_email && (
-                          <p className="text-xs text-muted-foreground mb-2">
-                            {certificate.recipient_email}
-                          </p>
+        <Card className="max-w-4xl mx-auto">
+          <CardHeader>
+            <CardTitle className="text-2xl">Generate New Certificate Batch</CardTitle>
+            <CardDescription>
+              Select a template, upload recipient data, and start the generation process.
+            </CardDescription>
+          </CardHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)}>
+              <CardContent className="space-y-8">
+                {/* Step 1: Batch Details */}
+                <div className="p-4 border rounded-lg">
+                    <h3 className="font-semibold mb-4">Step 1: Batch Details</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <FormField
+                        control={form.control}
+                        name="batch_name"
+                        render={({ field }) => (
+                            <FormItem>
+                            <FormLabel>Batch Name</FormLabel>
+                            <FormControl>
+                                <Input placeholder="e.g., Q3 Developer Awards" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                            </FormItem>
                         )}
-                        {certificate.status === 'generated' && (
-                            <Button asChild size="sm" variant="outline" className="w-full text-xs">
-                               <a href={`http://localhost:5000/api/certificates/${certificate.id}/download`} download>
-                                  <Download className="h-3 w-3 mr-1" />
-                                  Download
-                               </a>
-                            </Button>
+                        />
+                        <FormField
+                        control={form.control}
+                        name="template_id"
+                        render={({ field }) => (
+                            <FormItem>
+                            <FormLabel>Certificate Template</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value} disabled={loadingTemplates}>
+                                <FormControl>
+                                <SelectTrigger>
+                                    <SelectValue placeholder={loadingTemplates ? "Loading templates..." : "Select a template"} />
+                                </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                {templates.map((template) => (
+                                    <SelectItem key={template.id} value={template.id}>
+                                    {template.template_name}
+                                    </SelectItem>
+                                ))}
+                                </SelectContent>
+                            </Select>
+                            <FormMessage />
+                            </FormItem>
                         )}
-                        {certificate.error_message && (
-                          <p className="text-xs text-red-600 mt-2">{certificate.error_message}</p>
-                        )}
-                      </div>
-                    ))}
+                        />
+                    </div>
+                </div>
+
+                {/* Step 2: Upload Data */}
+                <div className={`p-4 border rounded-lg ${!selectedTemplate ? 'opacity-50' : ''}`}>
+                    <h3 className="font-semibold mb-4">Step 2: Upload Recipient Data</h3>
+                    {!selectedTemplate ? (
+                        <p className='text-sm text-muted-foreground'>Please select a template first.</p>
+                    ) : (
+                        <div>
+                            <FormLabel htmlFor="file-upload">Excel/CSV File</FormLabel>
+                            <div className="mt-2 flex items-center gap-4">
+                                <Button asChild variant="outline">
+                                <label htmlFor="file-upload" className="cursor-pointer">
+                                    <Upload className="h-4 w-4 mr-2" />
+                                    Choose File
+                                </label>
+                                </Button>
+                                <Input id="file-upload" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .csv" />
+                                {fileName && <p className="text-sm text-muted-foreground">{fileName}</p>}
+                            </div>
+                            <FormDescription className="mt-2">
+                                Your file must contain the following columns: <br />
+                                <code className="bg-muted px-2 py-1 rounded-md text-xs">{selectedTemplate.required_fields.join(', ')}</code>
+                            </FormDescription>
+                        </div>
+                    )}
+                </div>
+
+                {/* Step 3: Preview and Generate */}
+                {excelData.length > 0 && (
+                  <div className="p-4 border rounded-lg">
+                    <h3 className="font-semibold mb-4">Step 3: Preview Data & Generate</h3>
+                     {!canGenerate() && (
+                         <div className="p-3 mb-4 text-destructive-foreground bg-destructive/80 rounded-md flex items-center gap-2">
+                           <AlertCircle className="h-4 w-4"/>
+                           <p className="text-sm">File headers do not match template requirements. Please check your file and re-upload.</p>
+                         </div>
+                     )}
+                    <div className="max-h-60 overflow-y-auto border rounded-md">
+                        <Table>
+                        <TableHeader className="sticky top-0 bg-background">
+                            <TableRow>
+                            {Object.keys(excelData[0]).map(key => (
+                                <TableHead key={key}>{key}</TableHead>
+                            ))}
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {excelData.slice(0, 5).map((row, index) => (
+                            <TableRow key={index}>
+                                {Object.values(row).map((cell: any, i: number) => (
+                                <TableCell key={i}>{String(cell)}</TableCell>
+                                ))}
+                            </TableRow>
+                            ))}
+                        </TableBody>
+                        </Table>
+                    </div>
+                    {excelData.length > 5 && <p className="text-xs text-muted-foreground mt-2 text-center">Showing first 5 of {excelData.length} rows.</p>}
                   </div>
                 )}
               </CardContent>
-            </Card>
-          </div>
-        </div>
+              <CardFooter>
+                <Button type="submit" disabled={!canGenerate() || loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      Generate Certificates
+                      <ChevronsRight className="h-4 w-4 ml-2" />
+                    </>
+                  )}
+                </Button>
+              </CardFooter>
+            </form>
+          </Form>
+        </Card>
       </div>
     </div>
   );
