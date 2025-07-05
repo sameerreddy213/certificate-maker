@@ -1,13 +1,16 @@
+// client/src/pages/Dashboard.tsx
+
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
-import { CertificateTemplate, CertificateBatch } from '@/types';
-import { FileText, Download, Users, BarChart } from 'lucide-react';
+import { CertificateTemplate, CertificateBatch } from '@/types'; // Assuming these types are correctly defined
+import { FileText, Download, Users } from 'lucide-react'; // Removed BarChart as it's not directly used as an icon
 import { toast } from '@/hooks/use-toast';
 import { Bar, BarChart as RechartsBarChart, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+import api from '../services/api'; // Import the new api service
 
 interface DashboardStats {
   totalTemplates: number;
@@ -27,45 +30,32 @@ export const Dashboard = () => {
 
   const fetchDashboardData = async () => {
     setLoading(true);
-    // Get the authentication token from localStorage
-    const token = localStorage.getItem('token');
-
-    // Define the headers to include Content-Type and Authorization
-    const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // Attach the token as a Bearer token
-    };
-
     try {
-      // Fetch stats with the updated headers
-      const statsResponse = await fetch('http://localhost:5000/api/dashboard/stats', { headers });
-      if (!statsResponse.ok) {
-        // If response is not ok, check for specific status codes
-        if (statsResponse.status === 401) {
-          throw new Error('Unauthorized: Please log in again.');
-        }
-        throw new Error('Failed to fetch dashboard stats');
-      }
-      const statsData = await statsResponse.json();
-      setStats(statsData);
+      // Fetch stats using the api service
+      const statsResponse = await api.get<DashboardStats>('/dashboard/stats');
+      setStats(statsResponse.data);
 
-      // Fetch recent batches with the updated headers
-      const batchesResponse = await fetch('http://localhost:5000/api/batches', { headers });
-      if (!batchesResponse.ok) {
-        // If response is not ok, check for specific status codes
-        if (batchesResponse.status === 401) {
-          throw new Error('Unauthorized: Please log in again.');
-        }
-        throw new Error('Failed to fetch recent batches');
-      }
-      const batchesData = await batchesResponse.json();
-      setRecentBatches(batchesData.slice(0, 5));
+      // Fetch recent batches using the api service
+      const batchesResponse = await api.get<{ data: CertificateBatch[] }>('/batches'); // Assuming batches endpoint returns { data: [...] }
+      setRecentBatches(batchesResponse.data.data.slice(0, 5)); // Adjust based on actual API response structure
 
     } catch (error: any) {
       console.error('Error fetching dashboard data:', error);
+      let errorMessage = 'Could not load dashboard data. Please ensure the server is running.';
+
+      if (error.response) {
+        if (error.response.status === 401) {
+          errorMessage = 'Unauthorized: Please log in again.';
+        } else if (error.response.data && error.response.data.message) {
+          errorMessage = error.response.data.message;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
       toast({
         title: 'Error',
-        description: error.message || 'Could not load dashboard data. Please ensure the server is running and you are authenticated.',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -73,7 +63,6 @@ export const Dashboard = () => {
     }
   };
 
-  // THIS FUNCTION WAS MISSING, CAUSING THE CRASH
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed':
@@ -103,7 +92,7 @@ export const Dashboard = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      
+
       <div className="container mx-auto px-4 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
