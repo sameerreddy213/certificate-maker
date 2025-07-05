@@ -46,9 +46,13 @@ export const AuthPage = () => {
       if (!response.ok) {
         throw new Error(responseData.message || 'Login failed');
       }
-      
+
+      // Explicitly save the token to local storage
+      localStorage.setItem('token', responseData.token);
+
+      // Call the login context function (it might also store, but this ensures it's here)
       login(responseData.token);
-      
+
       toast({ title: 'Login successful!', description: 'Welcome back.' });
       navigate('/dashboard');
     } catch (error: any) {
@@ -78,7 +82,6 @@ export const AuthPage = () => {
     }
   };
 
-  // The JSX for the forms remains the same...
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md">
@@ -94,13 +97,19 @@ export const AuthPage = () => {
             </TabsList>
             <TabsContent value="login">
               <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-4">
-                 <div className="space-y-2">
-                  <Label htmlFor="login-email">Email</Label>
-                  <Input id="login-email" type="email" placeholder="m@example.com" {...loginForm.register('email')} />
-                </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="login-email">Email</Label>
+                    <Input id="login-email" type="email" placeholder="m@example.com" {...loginForm.register('email')} />
+                    {loginForm.formState.errors.email && (
+                      <p className="text-sm text-red-500">{loginForm.formState.errors.email.message}</p>
+                    )}
+                  </div>
                 <div className="space-y-2">
                   <Label htmlFor="login-password">Password</Label>
                   <Input id="login-password" type="password" {...loginForm.register('password')} />
+                  {loginForm.formState.errors.password && (
+                    <p className="text-sm text-red-500">{loginForm.formState.errors.password.message}</p>
+                  )}
                 </div>
                 <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? 'Signing in...' : 'Sign In'}</Button>
               </form>
@@ -110,14 +119,23 @@ export const AuthPage = () => {
                 <div className="space-y-2">
                   <Label htmlFor="signup-name">Full Name</Label>
                   <Input id="signup-name" placeholder="John Doe" {...signupForm.register('fullName')} />
+                  {signupForm.formState.errors.fullName && (
+                    <p className="text-sm text-red-500">{signupForm.formState.errors.fullName.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="signup-email">Email</Label>
                   <Input id="signup-email" type="email" placeholder="m@example.com" {...signupForm.register('email')} />
+                  {signupForm.formState.errors.email && (
+                    <p className="text-sm text-red-500">{signupForm.formState.errors.email.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="signup-password">Password</Label>
                   <Input id="signup-password" type="password" {...signupForm.register('password')} />
+                  {signupForm.formState.errors.password && (
+                    <p className="text-sm text-red-500">{signupForm.formState.errors.password.message}</p>
+                  )}
                 </div>
                 <Button type="submit" className="w-full" disabled={isLoading}>{isLoading ? 'Creating account...' : 'Create Account'}</Button>
               </form>

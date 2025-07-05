@@ -10,15 +10,16 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
-import { ArrowLeft, Plus, X, Upload } from 'lucide-react'; // Changed Eye to Upload
+import { ArrowLeft, Plus, X, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import api from '@/services/api'; // Make sure to use your api instance
 
 // Updated schema to include File object for template_file
 const templateSchema = z.object({
   name: z.string().min(1, 'Template name is required'),
   description: z.string().optional(),
   template_type: z.enum(['docx', 'pptx']), // Only docx and pptx allowed now
-  template_file: typeof window === 'undefined' ? z.any() : z.instanceof(File), // Handle File in browser
+  template_file: typeof window === 'undefined' ? z.any() : z.instanceof(File, { message: 'A template file is required.' }),
 });
 
 type TemplateForm = z.infer<typeof templateSchema>;
@@ -26,7 +27,7 @@ type TemplateForm = z.infer<typeof templateSchema>;
 export const CreateTemplate = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [placeholders, setPlaceholders] = useState<string[]>([]); // Placeholders will be manually added for DOCX/PPTX
+  const [placeholders, setPlaceholders] = useState<string[]>(['recipientName', 'eventName']); // Default placeholders
   const [newPlaceholder, setNewPlaceholder] = useState('');
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,7 +35,7 @@ export const CreateTemplate = () => {
   const form = useForm<TemplateForm>({
     resolver: zodResolver(templateSchema),
     defaultValues: {
-      template_type: 'docx', // Default to docx
+      template_type: 'docx',
       name: '',
       description: '',
     },
@@ -53,9 +54,6 @@ export const CreateTemplate = () => {
     setPlaceholders(placeholders.filter(p => p !== placeholder));
   };
 
-  // No direct "insert placeholder" into a text area anymore, as it's a file upload.
-  // The user will define these in their DOCX/PPTX files.
-
   const onSubmit = async (data: TemplateForm) => {
     setLoading(true);
     const formData = new FormData();
@@ -63,18 +61,15 @@ export const CreateTemplate = () => {
     if (data.description) formData.append('description', data.description);
     formData.append('template_type', data.template_type);
     formData.append('template_file', data.template_file);
-    formData.append('placeholders', JSON.stringify(placeholders)); // Send placeholders as a JSON string
+    formData.append('placeholders', JSON.stringify(placeholders));
 
     try {
-        const response = await fetch('http://localhost:5000/api/templates', {
-            method: 'POST',
-            body: formData, // FormData will set the correct Content-Type header
+        // Use your configured api instance which includes the auth token
+        await api.post('/templates', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
         });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || 'Failed to create template');
-        }
 
         toast({
             title: 'Success',
@@ -86,7 +81,7 @@ export const CreateTemplate = () => {
         console.error('Error creating template:', error);
         toast({
             title: 'Error',
-            description: error.message || 'Failed to create template',
+            description: error.response?.data?.message || 'Failed to create template',
             variant: 'destructive',
         });
     } finally {
@@ -155,7 +150,7 @@ export const CreateTemplate = () => {
                       type="file"
                       accept=".docx,.pptx"
                       ref={fileInputRef}
-                      onChange={(e) => form.setValue('template_file', e.target.files?.[0])}
+                      onChange={(e) => form.setValue('template_file', e.target.files?.[0], { shouldValidate: true })}
                     />
                     {selectedFile && (
                       <p className="text-sm text-muted-foreground">Selected: {selectedFile.name}</p>
@@ -185,7 +180,7 @@ export const CreateTemplate = () => {
                     <Label>Define Placeholders in your DOCX/PPTX</Label>
                     <div className="flex space-x-2">
                       <Input
-                        placeholder="e.g., recipientName"
+                        placeholder="e.g., issueDate"
                         value={newPlaceholder}
                         onChange={(e) => setNewPlaceholder(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addPlaceholder())}
@@ -200,7 +195,7 @@ export const CreateTemplate = () => {
                         <Badge
                           key={placeholder}
                           variant="secondary"
-                          className="cursor-default" // No longer directly inserting into editor
+                          className="cursor-default"
                         >
                           {`{{${placeholder}}}`}
                           <X
@@ -214,27 +209,31 @@ export const CreateTemplate = () => {
                       ))}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      These are the placeholders you should use in your uploaded DOCX/PPTX file (e.g., `{{recipientName}}`).
+                      {/* THE FIX IS HERE */}
+                      These are the placeholders to use in your file (e.g., {'{{recipientName}}'}).
                     </p>
                   </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Template Info (No direct editor or preview for files) */}
+            {/* Template Info */}
             <div className="lg:col-span-2">
               <Card className="h-full">
                 <CardHeader>
                   <CardTitle>Template Information</CardTitle>
                   <CardDescription>
-                    Upload your DOCX/PPTX file with the defined placeholders.
+                    Upload your file with the defined placeholders.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="h-full flex items-center justify-center">
                     <div className="text-center text-muted-foreground">
                         <Upload className="h-12 w-12 mx-auto mb-4" />
                         <p className="text-lg">Upload your DOCX or PPTX file.</p>
-                        <p className="text-sm">Ensure your placeholders (e.g., `{{recipientName}}`) are correctly placed in the document.</p>
+                        <p className="text-sm">
+                          {/* AND THE FIX IS HERE */}
+                          Ensure your placeholders (e.g., {'{{recipientName}}'}) are placed correctly.
+                        </p>
                     </div>
                 </CardContent>
               </Card>
@@ -249,7 +248,7 @@ export const CreateTemplate = () => {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || !selectedFile}>
               {loading ? 'Creating...' : 'Create Template'}
             </Button>
           </div>

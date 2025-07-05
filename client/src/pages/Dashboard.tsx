@@ -1,16 +1,15 @@
-// client/src/pages/Dashboard.tsx
-
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
-import { CertificateTemplate, CertificateBatch } from '@/types'; // Assuming these types are correctly defined
-import { FileText, Download, Users } from 'lucide-react'; // Removed BarChart as it's not directly used as an icon
+import { CertificateBatch } from '@/types';
+import { FileText, Download, Users } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { Bar, BarChart as RechartsBarChart, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
-import api from '../services/api'; // Import the new api service
+import api from '../services/api';
+import { useAuth } from '@/contexts/AuthContext'; // 1. Import useAuth
 
 interface DashboardStats {
   totalTemplates: number;
@@ -23,56 +22,45 @@ export const Dashboard = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentBatches, setRecentBatches] = useState<CertificateBatch[]>([]);
   const [loading, setLoading] = useState(true);
+  const { token } = useAuth(); // 2. Get the token from the auth context
 
   useEffect(() => {
-    fetchDashboardData();
-  }, []);
+    const fetchDashboardData = async () => {
+      setLoading(true);
+      try {
+        const statsResponse = await api.get<DashboardStats>('/dashboard/stats');
+        setStats(statsResponse.data);
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
-    try {
-      // Fetch stats using the api service
-      const statsResponse = await api.get<DashboardStats>('/dashboard/stats');
-      setStats(statsResponse.data);
-
-      // Fetch recent batches using the api service
-      const batchesResponse = await api.get<{ data: CertificateBatch[] }>('/batches'); // Assuming batches endpoint returns { data: [...] }
-      setRecentBatches(batchesResponse.data.data.slice(0, 5)); // Adjust based on actual API response structure
-
-    } catch (error: any) {
-      console.error('Error fetching dashboard data:', error);
-      let errorMessage = 'Could not load dashboard data. Please ensure the server is running.';
-
-      if (error.response) {
-        if (error.response.status === 401) {
-          errorMessage = 'Unauthorized: Please log in again.';
-        } else if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
-        }
-      } else if (error.message) {
-        errorMessage = error.message;
+        // API endpoint for batches seems to be just /batches, not /batches/data
+        const batchesResponse = await api.get<CertificateBatch[]>('/batches'); 
+        setRecentBatches(batchesResponse.data.slice(0, 5));
+      } catch (error: any) {
+        console.error('Error fetching dashboard data:', error);
+        toast({
+          title: 'Error',
+          description: error.response?.data?.message || 'Could not load dashboard data.',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoading(false);
       }
+    };
 
-      toast({
-        title: 'Error',
-        description: errorMessage,
-        variant: 'destructive',
-      });
-    } finally {
+    // 3. Only fetch data IF the token exists
+    if (token) {
+      fetchDashboardData();
+    } else {
+      // If there's no token, we shouldn't be on this page, but as a fallback, stop loading.
       setLoading(false);
     }
-  };
+  }, [token]); // 4. Add token as a dependency
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case 'processing':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
-      case 'failed':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-      default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
+      case 'completed': return 'bg-green-100 text-green-800';
+      case 'processing': return 'bg-yellow-100 text-yellow-800';
+      case 'failed': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -80,15 +68,15 @@ export const Dashboard = () => {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-          </div>
+        <div className="container mx-auto px-4 py-8 flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
         </div>
       </div>
     );
   }
 
+  // --- The rest of your dashboard JSX remains the same ---
+  // (Paste the return statement from your original file here)
   return (
     <div className="min-h-screen bg-background">
       <Navbar />

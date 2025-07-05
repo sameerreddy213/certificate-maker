@@ -1,7 +1,7 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom'; // Import useNavigate
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { 
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -13,14 +13,13 @@ import { User, LogOut, FileText, Plus, History, BarChart } from 'lucide-react';
 
 export const Navbar = () => {
   const { user, logout } = useAuth();
-  const navigate = useNavigate(); // Initialize navigate
+  const navigate = useNavigate();
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
 
-  // Create a handler for logout
   const handleLogout = () => {
-    logout(); // Clear the user session
-    navigate('/'); // Redirect to the homepage
+    logout();
+    navigate('/'); // Redirect to the public homepage after logout
   };
 
   return (
@@ -28,11 +27,13 @@ export const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center space-x-8">
-            <Link to="/" className="text-xl font-bold text-primary">
+            
+            {/* THE FIX IS HERE: Make the link destination conditional */}
+            <Link to={user ? "/dashboard" : "/"} className="text-xl font-bold text-primary">
               CertificateGen
             </Link>
             
-            {user && ( // Only show nav links if user is logged in
+            {user && (
               <div className="hidden md:flex items-center space-x-6">
                 <Link to="/dashboard" className={`flex items-center space-x-2 text-sm font-medium transition-colors hover:text-primary ${isActive('/dashboard') ? 'text-primary' : 'text-muted-foreground'}`}>
                   <BarChart className="h-4 w-4" /><span>Dashboard</span>
@@ -56,6 +57,7 @@ export const Navbar = () => {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                     <Avatar className="h-8 w-8">
+                      {/* Use optional chaining (?) in case fullName is not available */}
                       <AvatarFallback>{user.fullName?.charAt(0).toUpperCase()}</AvatarFallback>
                     </Avatar>
                   </Button>
@@ -68,7 +70,7 @@ export const Navbar = () => {
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout}> {/* Use the new handler */}
+                  <DropdownMenuItem onClick={handleLogout}>
                     <LogOut className="mr-2 h-4 w-4" />
                     <span>Log out</span>
                   </DropdownMenuItem>
