@@ -1,9 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
-const templateController_1 = require("../controllers/templateController");
-const authMiddleware_1 = require("../middleware/authMiddleware"); // Import the middleware
+const authController_1 = require("../controllers/authController"); // Correctly import authentication functions
 const router = (0, express_1.Router)();
-// Apply the 'protect' middleware to both routes
-router.route('/').get(authMiddleware_1.protect, templateController_1.getTemplates).post(authMiddleware_1.protect, templateController_1.createTemplate);
+// Public routes for user registration and login
+router.post('/register', authController_1.register); // Handles POST requests to /api/auth/register
+router.post('/login', authController_1.login); // Handles POST requests to /api/auth/login
 exports.default = router;

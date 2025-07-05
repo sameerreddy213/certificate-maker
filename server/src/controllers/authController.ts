@@ -1,43 +1,45 @@
+// server/src/controllers/authController.ts
+
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import User from '../models/User';
+import { jwtConfig } from '../config/jwt'; // This import now carries the correct types
 
-// The 'register' function with its full implementation
+// The 'register' function
 export const register = async (req: Request, res: Response) => {
   const { fullName, email, password } = req.body;
 
   try {
-    // Check if user already exists
     let user = await User.findOne({ email });
     if (user) {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    // Create a new user
     user = new User({
       fullName,
       email,
       password,
     });
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
 
     await user.save();
 
-    // Create a JSON Web Token
     const payload = {
       user: {
         id: user.id,
+        fullName: user.fullName,
+        email: user.email,
       },
     };
 
+    // This will now compile correctly
     jwt.sign(
       payload,
-      process.env.JWT_SECRET || 'your_default_secret',
-      { expiresIn: '1h' },
+      jwtConfig.secret,
+      { expiresIn: jwtConfig.expiresIn },
       (err, token) => {
         if (err) throw err;
         res.status(201).json({ token });
@@ -54,19 +56,16 @@ export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   try {
-    // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Create and return a JSON Web Token for the session
     const payload = {
       user: {
         id: user.id,
@@ -75,10 +74,11 @@ export const login = async (req: Request, res: Response) => {
       },
     };
 
+    // This will now compile correctly
     jwt.sign(
       payload,
-      process.env.JWT_SECRET || 'your_default_secret',
-      { expiresIn: '1h' },
+      jwtConfig.secret,
+      { expiresIn: jwtConfig.expiresIn },
       (err, token) => {
         if (err) throw err;
         res.json({ token });
